@@ -1,0 +1,6 @@
+# Python's compiled cache
+__pycache__/
+# Made by running simulator.py; easy to regenerate
+fleet_data.csv
+# Memory folder from a Claude plugin, not part of the project
+.remember/
