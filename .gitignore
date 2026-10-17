@@ -1,0 +1,8 @@
+# Python's compiled cache
+__pycache__/
+# Made by running simulator.py; easy to regenerate
+fleet_data*.csv
+# Memory folder from a Claude plugin, not part of the project
+.remember/
+# Copy of the project for uploading to GitHub by hand (made from the files Git tracks)
+github_upload/

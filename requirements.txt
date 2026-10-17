@@ -1,0 +1,2 @@
+# The web dashboard (also brings pandas for tables and altair for charts)
+streamlit
