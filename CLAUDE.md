@@ -21,96 +21,47 @@ the blunt move is shedding load. We're building what sits between "normal" and "
 - Keep the dispatcher (a human) in the loop for high-impact decisions.
 - Never break the live demo: each new phase must leave the app runnable.
 
-## What's built (checkpoint: "working version before map", on `main`)
+## What's built
 A Streamlit dashboard with two tabs:
-- **Live dispatch**: 40 simulated homes in the LA harbor area over one day with a
-  heat wave. Rules sort batteries into Needs dispatcher / Watch / Can wait / Normal,
-  guess why silent batteries went quiet (broken, tripped, just not talking), and
-  propose a grid relief plan (pause charging → discharge → flexible homes wait → shed
-  lowest priority). Each step needs the dispatcher's Approve click. Play button runs
-  the day and pauses on new events. A rules-based summary sits at the top.
+- **Live dispatch** (the heat-wave demo day):
+  - 40 simulated homes in a small part of Wilmington (LA harbor), all on land.
+    Household types: regular (some with EV + pool = flexible load), vulnerable
+    (elderly / heat-vulnerable), medical. Plus 3 critical buildings: hospital, fire
+    station, cold storage (made-up names, real-looking locations).
+  - The region is split into **4 zones** (North Wilmington, West Wilmington, Banning
+    Park, Avalon) that tile one grid section. Every home and building is in one zone.
+    Each zone has a capacity; zone stress = (fleet homes + buildings + other customers)
+    ÷ capacity. Strained at 80%+.
+  - Rules sort batteries into Needs dispatcher / Watch / Can wait / Normal and guess
+    why silent batteries went quiet (broken, tripped, just not talking).
+  - **Zone relief ladder**, most strained zone first, gentlest step first: pause
+    charging → batteries discharge → flexible homes delay → shed regular homes (EV/pool
+    first, then street blocks of other customers) → shed vulnerable homes → critical
+    buildings switch to their own backup. Medical homes are never cut. Every step needs
+    the dispatcher's Approve click (cutting power needs an extra confirmation).
+  - Map (pydeck) under the summary: zones lightly shaded grey / amber / red by stress,
+    with names; homes colored by category; critical buildings labelled. Moves with Play.
+  - Play button runs the day and pauses on new events. Rules-based summary on top.
 - **Normal day earnings**: charge cheap at midday, use at the evening peak (~$128/day
   for the fleet).
 
-## Next: the map version (plan)
+Demo story: Banning Park strained from 2 PM (gentle steps are enough at first), West
+Wilmington from 5 PM, Avalon from 6:15 PM; North Wilmington stays OK.
 
-### 1. Interactive map
-- New first tab, **Map**, showing every home, generator and critical building.
-- Use **pydeck** (already installed with Streamlit, no new dependency).
-- Dots colored by rules category (Needs dispatcher / Watch / Can wait / Normal);
-  icons or shapes for generators and critical buildings so color is never the only cue.
-- Hover a dot: home type, battery status and the rules' reason.
-- Moves with the existing time slider and Play button.
-- Lines from each generator to the homes it serves.
+## Next
 
-### 2. Generators serving groups of homes
-- The grid is split into **generators** (think: a local substation or feeder), each
-  serving a group of homes and critical buildings, with its own capacity in kW.
-- Grid stress is worked out **per generator** (load ÷ capacity), not one number for
-  the whole city. The heat wave hits some generators harder than others.
-- The relief plan runs per generator: only the homes on a strained generator are asked
-  to help or wait. The summary names the strained generator(s).
-- Demo story: one generator goes over capacity while its neighbour is fine.
-
-### 3. Household types
-Replace today's five types with a fuller set, each with its own usage pattern, how much
-load can wait, and its place in the wait order:
-- Medical equipment at home (critical, waits last)
-- Elderly / heat-vulnerable (critical during heat waves)
-- Family household (normal)
-- Work-from-home (normal, busy daytime)
-- EV + pool (flexible, waits first)
-- Small home business (normal)
-Exact list and numbers come from the config file (see 5).
-
-### 4. Critical buildings
-Non-household sites on the map, always protected (never shed, served first):
-- Hospital / clinic
-- Harbor / port operations
-- Cell-phone tower
-- Cold storage / pharmacy
-- Water pumping station
-- Fire / police station
-Each has its own load and may have its own backup battery. They show in alerts and the
-summary when the generator feeding them is strained.
-
-### 5. Country switch, driven by a config file
+### Country switch, driven by a config file
 - A dropdown in the dashboard picks the country; everything country-specific comes from
   **`config/countries.toml`** (read with Python's built-in `tomllib`, no new dependency).
-- Each country section sets: name, map centre and zoom, neighbourhood names, currency
-  symbol, electricity prices by hour, normal home voltage (e.g. 240 V US split-phase vs
-  230 V Europe), household-type mix, critical buildings, and generators.
+- Each country section sets: name, map centre and zoom, zones (shapes + capacity),
+  currency symbol, electricity prices by hour, normal home voltage (e.g. 240 V US
+  split-phase vs 230 V Europe), household-type mix, and critical buildings.
 - Adding a country = adding a section to the file. No code changes.
-- Sketch of the format:
-  ```toml
-  [usa]
-  name = "United States (Los Angeles harbor)"
-  map_center = [33.74, -118.27]
-  currency = "$"
-  voltage = 240
-  prices = { cheap = 0.08, normal = 0.15, peak = 0.35, heat_wave_peak = 0.90 }
-
-  [[usa.generators]]
-  name = "San Pedro substation"
-  location = [33.74, -118.29]
-  capacity_kw = 250
-
-  [usa.household_mix]
-  medical = 1
-  family = 6
-  flexible = 3
-  ```
-
-### Build order (keep the app runnable after each step)
-1. Config file + loader, with the **current** LA setup moved into it. App looks the same.
-2. Generators and per-generator stress in `simulator.py` and `rules.py`.
-3. Household types and critical buildings.
-4. Map tab.
-5. Second country in the config + the country dropdown.
+- Build order: first move the **current** Wilmington setup into the file (app looks
+  the same), then add a second country and the dropdown.
 
 ### Open questions
 - Which second country (or countries) should the demo show?
-- Real-looking coordinates for the LA harbor sites, or a stylised made-up town?
 
 ## Tech stack
 - Python + Streamlit (web dashboard), Altair for charts, pydeck for the map
@@ -126,10 +77,10 @@ summary when the generator feeding them is strained.
 - Check the rules on their own: python rules.py
 
 ## Structure
-- app.py: the dashboard (tabs: Live dispatch, Normal day earnings; Map coming)
-- simulator.py: generates the fake fleet and planted problems
+- app.py: the dashboard (tabs: Live dispatch with the map, Normal day earnings)
+- simulator.py: generates the fake fleet, zones, critical buildings and planted problems
 - rules.py: decides what's normal, what can wait, what needs the dispatcher, the relief
-  plan and the summary
+  plan per zone and the summary
 - config/countries.toml: (planned) everything country-specific
 - requirements.txt: list of Python packages to install
 

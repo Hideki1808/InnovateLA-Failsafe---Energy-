@@ -39,14 +39,24 @@ BATTERY_MAX_KW = 10.0
 # ---------------------------------------------------------------------------
 # Where things are: a small residential part of Wilmington, near the LA harbor
 # ---------------------------------------------------------------------------
-# Each neighborhood is a shape on the map, given by its corners as (latitude, longitude).
+# The region is one section of the grid, split into ZONES (neighborhoods). Each zone is
+# a shape on the map, given by its corners as (latitude, longitude); together they tile
+# the region with no gaps or overlaps, so every battery and building is in exactly one.
 # The shapes sit over streets and houses only, so random points inside them land on
 # dry land. WATER marks the places nearby that are NOT land, as a second safety check.
-NEIGHBORHOODS = {
-    "Banning Park":     [(33.7920, -118.2620), (33.7920, -118.2520), (33.7860, -118.2520), (33.7860, -118.2620)],
-    "Avalon":           [(33.7860, -118.2670), (33.7860, -118.2570), (33.7805, -118.2570), (33.7805, -118.2670)],
-    "West Wilmington":  [(33.7920, -118.2740), (33.7920, -118.2650), (33.7845, -118.2650), (33.7845, -118.2740)],
-    "North Wilmington": [(33.7965, -118.2700), (33.7965, -118.2570), (33.7925, -118.2570), (33.7925, -118.2700)],
+#
+# Each zone has its own capacity: how much power the grid can deliver into it. Besides
+# our fleet homes, a zone also has other customers (homes without batteries, shops),
+# given here at their evening peak. Zone stress = everything it's drawing ÷ capacity.
+ZONES = {
+    "North Wilmington": {"shape": [(33.7965, -118.2740), (33.7965, -118.2520), (33.7920, -118.2520), (33.7920, -118.2740)],
+                         "capacity_kw": 560, "other_customers_kw": 250},
+    "West Wilmington":  {"shape": [(33.7920, -118.2740), (33.7920, -118.2630), (33.7860, -118.2630), (33.7860, -118.2740)],
+                         "capacity_kw": 480, "other_customers_kw": 250},
+    "Banning Park":     {"shape": [(33.7920, -118.2630), (33.7920, -118.2520), (33.7860, -118.2520), (33.7860, -118.2630)],
+                         "capacity_kw": 560, "other_customers_kw": 250},
+    "Avalon":           {"shape": [(33.7860, -118.2740), (33.7860, -118.2520), (33.7805, -118.2520), (33.7805, -118.2740)],
+                         "capacity_kw": 520, "other_customers_kw": 250},
 }
 WATER = {
     "Harbor (Slip 5 / East Basin)": [(33.7720, -118.2900), (33.7720, -118.2200), (33.7400, -118.2200), (33.7400, -118.2900)],
@@ -64,16 +74,16 @@ HOUSEHOLD_TYPES = {
 # so these homes are first in line when the grid needs relief.
 FLEXIBLE_SHARE = 0.4
 
-# Critical buildings: always protected, never shed. Names are made up for the demo.
+# Critical buildings: protected last, never cut off. If the grid is desperate, the ones
+# with their own backup can be asked to run on it for a while. Names are made up.
 CRITICAL_BUILDINGS = [
     {"building_id": "HOSP-1", "name": "Harbor Community Hospital", "building_type": "hospital",
-     "lat": 33.7890, "lon": -118.2560, "load_kw": 150, "backup": "Diesel generator, 24 hours"},
+     "lat": 33.7890, "lon": -118.2560, "load_kw": 150, "backup": "Diesel generator", "backup_hours": 24},
     {"building_id": "FIRE-1", "name": "Wilmington Fire Station", "building_type": "fire_station",
-     "lat": 33.7830, "lon": -118.2625, "load_kw": 15, "backup": "Battery, 8 hours"},
+     "lat": 33.7830, "lon": -118.2625, "load_kw": 15, "backup": "Battery", "backup_hours": 8},
     {"building_id": "COLD-1", "name": "Harbor Cold Storage", "building_type": "cold_storage",
-     "lat": 33.7880, "lon": -118.2700, "load_kw": 40, "backup": "None"},
+     "lat": 33.7880, "lon": -118.2700, "load_kw": 40, "backup": "None", "backup_hours": 0},
 ]
-
 # Planted problems
 SILENT_BATTERY = "BAT-007"
 SILENT_AT_HOUR = 13      # stops reporting at 1 pm
@@ -105,15 +115,23 @@ def inside(lat, lon, shape):
     return hits
 
 
+def zone_of(lat, lon):
+    """Which zone a spot is in (None if it's outside the region)."""
+    for name, zone in ZONES.items():
+        if inside(lat, lon, zone["shape"]):
+            return name
+    return None
+
+
 def on_land(lat, lon):
-    """Inside one of our neighborhoods, and not in any known water."""
-    in_area = any(inside(lat, lon, shape) for shape in NEIGHBORHOODS.values())
+    """Inside one of our zones, and not in any known water."""
+    in_area = zone_of(lat, lon) is not None
     in_water = any(inside(lat, lon, shape) for shape in WATER.values())
     return in_area and not in_water
 
 
 def random_point(rng, shape):
-    """A random spot inside a neighborhood shape that's on land."""
+    """A random spot inside a zone's shape that's on land."""
     lats = [p[0] for p in shape]
     lons = [p[1] for p in shape]
     while True:   # keep trying until a point lands inside (almost always first try)
@@ -141,12 +159,12 @@ def make_fleet(rng):
         household_type = types[i - 1]
         has_flexible_load = household_type == "regular" and flexible_left > 0
         flexible_left -= has_flexible_load
-        neighborhood = rng.choice(list(NEIGHBORHOODS))
-        lat, lon = random_point(rng, NEIGHBORHOODS[neighborhood])
+        zone = rng.choice(list(ZONES))
+        lat, lon = random_point(rng, ZONES[zone]["shape"])
         home = {
             "battery_id": f"BAT-{i:03d}",
             "home_id": f"HOME-{i:03d}",
-            "neighborhood": neighborhood,
+            "zone": zone,
             "lat": lat,
             "lon": lon,
             "household_type": household_type,
@@ -183,9 +201,32 @@ def _set_type(fleet, battery_id, household_type):
 
 def critical_buildings():
     """The critical buildings (hospital, fire station, cold storage) with their locations."""
+    buildings = []
     for b in CRITICAL_BUILDINGS:
         assert on_land(b["lat"], b["lon"]), f"{b['name']} is not on land"
-    return [dict(b) for b in CRITICAL_BUILDINGS]
+        buildings.append({**b, "zone": zone_of(b["lat"], b["lon"])})
+    return buildings
+
+
+def building_load_kw(building, heat_wave):
+    """A critical building's power use. Air conditioning adds a quarter in a heat wave."""
+    return building["load_kw"] * (1.25 if heat_wave else 1.0)
+
+
+def other_customers_kw(zone, hour):
+    """Power used in the zone by customers outside our fleet (homes without
+    batteries, shops). Low at night, highest in the evening, more in a heat wave."""
+    if hour < 6:
+        share = 0.45
+    elif hour < 17:
+        share = 0.7
+    elif hour < 22:
+        share = 1.0
+    else:
+        share = 0.6
+    if is_heat_wave(hour):
+        share *= 1.5                          # everyone's air conditioning
+    return ZONES[zone]["other_customers_kw"] * share
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +256,9 @@ def electricity_price(hour):
 
 
 def grid_stress(hour):
-    """How strained the grid is, 0 (relaxed) to 100 (about to shed load)."""
+    """The utility's citywide alert level, 0 (relaxed) to 100 (about to shed load).
+    Batteries react to this signal on their own. Each zone's actual stress is worked
+    out separately from what it's really drawing (see zone_stress in the readings)."""
     if is_heat_wave(hour):
         return 85 + (hour - HEAT_WAVE_START_HOUR) * 2   # climbs 85 -> 95
     if 17 <= hour < 21:
@@ -307,6 +350,7 @@ def simulate(seed=SEED, ordinary_day=False):
 
 def _run_day(seed, ordinary_day):
     rng = random.Random(seed)
+    buildings = critical_buildings()
     # Which batteries get planted problems today (none on an ordinary day)
     silent_id = None if ordinary_day else SILENT_BATTERY
     tripped_id = None if ordinary_day else TRIPPED_BATTERY
@@ -387,7 +431,7 @@ def _run_day(seed, ordinary_day):
                 "time": now.strftime("%Y-%m-%d %H:%M"),
                 "battery_id": bid,
                 "home_id": home["home_id"],
-                "neighborhood": home["neighborhood"],
+                "zone": home["zone"],
                 "lat": home["lat"],
                 "lon": home["lon"],
                 "household_type": home["household_type"],
@@ -411,6 +455,20 @@ def _run_day(seed, ordinary_day):
                 # Money: discharging when it's pricey saves/earns; charging costs
                 "earnings_usd": round(kwh * price, 3),
             })
+
+        # --- Each zone's load and stress at this moment ---
+        # Load = what our fleet homes pull from the grid (batteries reduce this)
+        #      + the critical buildings + the zone's other customers.
+        step_rows = readings[-len(fleet):]
+        for zone, info in ZONES.items():
+            fleet_kw = sum(r["from_grid_kw"] for r in step_rows if r["zone"] == zone)
+            buildings_kw = sum(building_load_kw(b, is_heat_wave(hour)) for b in buildings if b["zone"] == zone)
+            load = fleet_kw + buildings_kw + other_customers_kw(zone, hour)
+            for r in step_rows:
+                if r["zone"] == zone:
+                    r["zone_load_kw"] = round(load, 1)
+                    r["zone_capacity_kw"] = info["capacity_kw"]
+                    r["zone_stress"] = round(100 * load / info["capacity_kw"], 1)
 
     return readings
 
@@ -471,7 +529,7 @@ if __name__ == "__main__":
     homes = snapshot(data, "2026-10-17 00:00")
     print("Household types:", {t: sum(h["household_type"] == t for h in homes) for t in HOUSEHOLD_TYPES},
           "| with EV + pool:", sum(h["priority"] == "flexible" for h in homes))
-    print("Neighborhoods:", {n: sum(h["neighborhood"] == n for h in homes) for n in NEIGHBORHOODS})
+    print("Homes per zone:", {z: sum(h["zone"] == z for h in homes) for z in ZONES})
     print("All homes on land:", all(on_land(h["lat"], h["lon"]) for h in homes))
     print("\nCritical buildings:")
     for b in critical_buildings():

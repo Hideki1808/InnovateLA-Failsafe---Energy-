@@ -28,8 +28,8 @@ NEEDS_DISPATCHER = "Needs dispatcher"
 # ---------------------------------------------------------------------------
 HOT_C = 60                 # inverter hotter than this is a warning sign
 LOW_CHARGE_PCT = 20        # below this, a critical home's backup is running thin
-BUSY_GRID = 60             # grid stress at or above this: flexible homes should wait
-STRAINED_GRID = 80         # grid stress at or above this: the grid is close to shedding load
+BUSY_GRID = 70             # zone stress at or above this: flexible homes should wait
+STRAINED_GRID = 80         # zone stress at or above this: the zone is close to shedding load
 VOLTAGE_LOW, VOLTAGE_HIGH = 225, 255   # normal home voltage is about 240
 METER_TOLERANCE_KW = 0.3   # differences smaller than this are just noise
 FLEET_ACTIVE_KW = 1.0      # if healthy batteries average more than this, the fleet is "busy"
@@ -41,19 +41,23 @@ LOOKBACK_STEPS = 8         # how far back to look for warning signs (8 x 15 min 
 # ---------------------------------------------------------------------------
 # Whose power can wait
 # ---------------------------------------------------------------------------
-# Lower number = can wait sooner. Homes with medical equipment, cold storage or a
-# cell-phone relay are "critical" and come last.
-WAIT_ORDER = {"flexible": 1, "normal": 2, "critical": 3}
+# Lower number = can wait sooner. Medical homes come last of all; critical buildings
+# (hospital, fire station, cold storage) aren't homes, but they're protected last too:
+# see the relief plan below.
 WAIT_LABEL = {
     1: "1 - Can wait first (EV charger, pool pump)",
     2: "2 - Can wait if needed (regular household)",
-    3: "3 - Protect, wait last (medical, cold storage, phones)",
+    3: "3 - Wait late (elderly / heat-vulnerable)",
+    4: "4 - Protect last (medical equipment)",
 }
 
 
 def wait_order(row):
     """Return (number, label) for how early this home's power can wait."""
-    number = WAIT_ORDER[row["priority"]]
+    if row["priority"] == "flexible":
+        number = 1
+    else:
+        number = {"regular": 2, "vulnerable": 3, "medical": 4}[row["household_type"]]
     return number, WAIT_LABEL[number]
 
 
@@ -148,7 +152,7 @@ def guess_silent(row, history, fleet_kw_by_time):
 # ---------------------------------------------------------------------------
 def classify(row, history, fleet_kw_by_time):
     """Return (category, reason, silent_guess) for one battery at one moment."""
-    stress = row["grid_stress"]
+    stress = row["zone_stress"]                         # how strained this home's zone is
     critical = row["priority"] == "critical"
     home = row["description"].split(" (")[0].lower()   # "medical equipment at home"
 
@@ -180,24 +184,24 @@ def classify(row, history, fleet_kw_by_time):
             return NEEDS_DISPATCHER, reason + f" Critical home ({home}): consider easing its load.", None
         return WATCH, reason, None
 
-    # Rule 4 - A CRITICAL home's battery is getting LOW. If the grid is also strained,
+    # Rule 4 - A CRITICAL home's battery is getting LOW. If its zone is also strained,
     # this home could lose its backup right when it's needed, so ask a person.
     if critical and row["charge_pct"] < LOW_CHARGE_PCT:
         reason = f"Backup down to {row['charge_pct']:.0f}% at a critical home ({home})."
         if stress >= STRAINED_GRID:
-            return NEEDS_DISPATCHER, reason + f" Grid is strained ({stress:.0f}/100).", None
+            return NEEDS_DISPATCHER, reason + f" {row['zone']} is strained ({stress:.0f}% of capacity).", None
         return WATCH, reason, None
 
     # Rule 5 - Odd VOLTAGE at the home. Not an emergency, but often comes before trouble.
     if not VOLTAGE_LOW <= row["voltage"] <= VOLTAGE_HIGH:
         return WATCH, f"Home voltage is {row['voltage']:.0f} V (normal is about 240 V).", None
 
-    # Rule 6 - CAN WAIT: healthy battery, flexible home, busy grid. This home's extra
+    # Rule 6 - CAN WAIT: healthy battery, flexible home, busy zone. This home's extra
     # load (EV charging, pool pump) can be paused before anyone talks about shedding.
     if row["priority"] == "flexible" and stress >= BUSY_GRID:
         return CAN_WAIT, (
-            f"Grid is busy ({stress:.0f}/100). This home's EV charger and pool pump "
-            f"can be paused. First in line to wait."
+            f"{row['zone']} is busy ({stress:.0f}% of capacity). This home's EV charger and "
+            f"pool pump can be paused. First in line to wait."
         ), None
 
     # Rule 7 - Nothing above matched: all good.
@@ -239,6 +243,7 @@ def triage(readings, at_time):
             "reason": reason,
             "silent_guess": guess,
             "battery_status": row["battery_status"],
+            "zone": row["zone"],
             "wait_order": order,
             "wait_label": order_label,
         })
@@ -253,53 +258,72 @@ def waiting_list(results):
 
 
 # ---------------------------------------------------------------------------
-# Relief plan: gentler steps to try BEFORE shedding load
+# Relief plan: gentler steps to try BEFORE shedding load, one zone at a time
 # ---------------------------------------------------------------------------
-# When the grid is strained, the plan suggests four steps, gentlest first:
-#   1. Pause battery charging         (nobody notices)
-#   2. Batteries discharge to help    (nobody notices; batteries keep a reserve)
-#   3. Flexible homes delay usage     (EV and pool wait a bit)
-#   4. Shed lowest-priority homes     (people lose power; last resort)
-# Each step says how many kW it frees. The plan only goes as far as it has to.
+# When a zone is strained, the plan suggests these steps for that zone only,
+# gentlest first:
+#   1. Pause battery charging            (nobody notices)
+#   2. Batteries discharge to help       (nobody notices; batteries keep a reserve)
+#   3. Flexible homes delay usage        (EV and pool wait a bit)
+#   4. Shed regular homes                (EV/pool homes first, then street blocks of the
+#                                         zone's other customers: homes without our batteries)
+#   5. Shed vulnerable homes             (elderly / heat-vulnerable; very late)
+#   6. Critical buildings run on backup  (hospital, fire station; protected last)
+# Medical homes are never on any list. The most strained zone is handled first.
+# Each step says how many kW it frees, and the plan only goes as far as it has to.
 # Nothing happens until the dispatcher approves it in the dashboard.
 
-TARGET_STRESS = 75         # aim to bring grid stress back down to this
-KW_PER_STRESS_POINT = 4    # simple model: every 4 kW the fleet frees lowers grid stress by 1 point
+TARGET_STRESS = 78         # aim to bring a strained zone back just under the strained line (80%)
+BLOCK_KW = 25              # cutting one street block of other customers frees about this much
+HOMES_PER_BLOCK = 10       # ...and turns off about this many homes
 RESERVE_PCT = 20           # every battery keeps at least this much for its own home
 SUPPORT_HOURS = 1          # extra discharge has to be something the battery can keep up this long
 
 
-def stress_after(stress, kw_freed):
-    """Estimated grid stress after freeing this many kW."""
-    return max(0, stress - kw_freed / KW_PER_STRESS_POINT)
+def stress_after(load_kw, capacity_kw, kw_freed):
+    """Zone stress (% of capacity) after freeing this many kW."""
+    return max(0.0, 100 * (load_kw - kw_freed) / capacity_kw)
 
 
-def relief_plan(readings, at_time):
+def shed_list(rows, gap, extra, household_type):
+    """Pick homes of one household type to cut, lowest priority first, until `gap` kW is covered."""
+    order = sorted([r for r in rows if r["household_type"] == household_type],
+                   key=lambda r: (wait_order(r)[0], r["battery_id"]))
+    picked, kw = [], 0.0
+    for r in order:
+        if kw >= gap:
+            break
+        # What cutting this home saves, after the earlier steps already helped
+        saves = r["from_grid_kw"] - r["flexible_kw"] - extra.get(r["battery_id"], 0)
+        if saves > 0.1:
+            picked.append(r)
+            kw += saves
+    return picked, kw
+
+
+def relief_plan(readings, at_time, zone):
     """
-    Returns None if the grid is fine. Otherwise returns a dict:
-        stress, needed_kw, steps (list of 4 dicts, gentlest first)
+    The relief plan for one zone. Returns None if the zone isn't strained, otherwise:
+        zone, stress, load_kw, capacity_kw, needed_kw, steps (gentlest first), shortfall_kw
     """
-    now_rows = [r for r in readings if r["time"] == at_time]
-    stress = now_rows[0]["grid_stress"]
-
-    # The plan only appears when the grid is strained (same line as Rule 4 uses)
+    rows = [r for r in readings if r["time"] == at_time and r["zone"] == zone]
+    stress, load, capacity = rows[0]["zone_stress"], rows[0]["zone_load_kw"], rows[0]["zone_capacity_kw"]
     if stress < STRAINED_GRID:
         return None
 
-    needed = (stress - TARGET_STRESS) * KW_PER_STRESS_POINT
+    needed = load - capacity * TARGET_STRESS / 100     # kW to free to get back to the target
 
     # Only batteries that are talking and healthy get commands.
     # (Silent, tripped or hot batteries are already on the alerts list.)
-    healthy = [r for r in now_rows if r["battery_reporting"] and r["battery_status"] == "ok"]
+    healthy = [r for r in rows if r["battery_reporting"] and r["battery_status"] == "ok"]
 
-    # Step 1 - PAUSE CHARGING: any battery pulling power from the grid to charge stops.
-    # Gentlest step: the batteries just fill up a little later.
+    # Step 1 - PAUSE CHARGING: any battery in the zone pulling power to charge stops.
     charging = [r for r in healthy if r["battery_kw"] < 0]
     step1_kw = sum(-r["battery_kw"] for r in charging)
 
-    # Step 2 - DISCHARGE TO SUPPORT THE GRID: healthy batteries push out more power.
-    # Rules: critical homes are left alone (their charge is their backup), every battery
-    # keeps RESERVE_PCT, and the extra must last SUPPORT_HOURS so we don't run them dry.
+    # Step 2 - DISCHARGE TO SUPPORT THE ZONE: healthy batteries push out more power.
+    # Medical and vulnerable homes are left alone (their charge is their backup), every
+    # battery keeps RESERVE_PCT, and the extra must last SUPPORT_HOURS.
     extra = {}
     for r in healthy:
         if r["priority"] == "critical":
@@ -313,67 +337,75 @@ def relief_plan(readings, at_time):
 
     # Step 3 - FLEXIBLE HOMES DELAY USAGE: pause EV charging and pool pumps, nudge
     # smart thermostats. Inconvenient but harmless; they catch up later.
-    flexible = [r for r in now_rows if r["flexible_kw"] > 0]
+    flexible = [r for r in rows if r["flexible_kw"] > 0]
     step3_kw = sum(r["flexible_kw"] for r in flexible)
 
-    # Step 4 - SHED LOWEST-PRIORITY HOMES: only whatever gap is left after steps 1-3.
-    # Order: flexible homes first, then regular households. Critical homes are NEVER shed.
+    # Steps 4 and 5 - SHED HOMES: only whatever gap is left. Regular homes first
+    # (EV/pool homes before the rest), vulnerable homes only if that isn't enough.
     gap = needed - step1_kw - step2_kw - step3_kw
-    order = sorted(
-        [r for r in now_rows if r["priority"] != "critical"],
-        key=lambda r: (WAIT_ORDER[r["priority"]], r["battery_id"]),
-    )
-    shed, step4_kw = [], 0.0
-    for r in order:
-        if step4_kw >= gap:
+    shed4, step4_kw = shed_list(rows, gap, extra, "regular")
+    # ...then whole street blocks of the zone's other customers (homes without our
+    # batteries), about BLOCK_KW each, until the gap is covered.
+    heat = rows[0]["heat_wave"]
+    buildings_kw = sum(simulator.building_load_kw(b, heat) for b in simulator.critical_buildings()
+                       if b["zone"] == zone)
+    other_kw = load - sum(r["from_grid_kw"] for r in rows) - buildings_kw
+    blocks = 0
+    while step4_kw < gap and (blocks + 1) * BLOCK_KW <= other_kw:
+        blocks += 1
+        step4_kw += BLOCK_KW
+    shed5, step5_kw = shed_list(rows, gap - step4_kw, extra, "vulnerable")
+
+    # Step 6 - CRITICAL BUILDINGS RUN ON BACKUP: protected last. Buildings with their own
+    # backup (diesel, battery) switch to it for a while; nobody loses power. Most backup first.
+    gap6 = gap - step4_kw - step5_kw
+    on_backup, step6_kw = [], 0.0
+    buildings = sorted((b for b in simulator.critical_buildings() if b["zone"] == zone and b["backup_hours"] > 0),
+                       key=lambda b: -b["backup_hours"])
+    for b in buildings:
+        if step6_kw >= gap6:
             break
-        # What cutting this home saves, after the earlier steps already helped
-        saves = r["from_grid_kw"] - r["flexible_kw"] - extra.get(r["battery_id"], 0)
-        if saves > 0.1:
-            shed.append(r)
-            step4_kw += saves
+        on_backup.append(b)
+        step6_kw += simulator.building_load_kw(b, heat)
 
     steps = [
-        {
-            "number": 1,
-            "title": "Pause battery charging",
-            "action": f"Tell {len(charging)} charging batteries to stop pulling power from the grid.",
-            "impact": "Nobody notices. Batteries just fill up a little later.",
-            "kw": step1_kw,
-            "targets": [r["battery_id"] for r in charging],
-            "nothing_to_do": "no batteries are charging.",
-        },
-        {
-            "number": 2,
-            "title": "Batteries discharge to support the grid",
-            "action": f"Ask {len(extra)} batteries to push out more power for the next {SUPPORT_HOURS} hour.",
-            "impact": f"Nobody notices. Critical homes are left alone, and every battery keeps "
-                      f"at least {RESERVE_PCT}% for its own home.",
-            "kw": step2_kw,
-            "targets": sorted(extra),
-            "nothing_to_do": "batteries are already giving all they can spare.",
-        },
-        {
-            "number": 3,
-            "title": "Ask flexible homes to delay usage",
-            "action": f"Ask {len(flexible)} flexible homes to pause EV charging and pool pumps "
-                      f"and nudge their thermostat.",
-            "impact": "Small inconvenience. They catch up later in the evening.",
-            "kw": step3_kw,
-            "targets": [r["battery_id"] for r in flexible],
-            "nothing_to_do": "no flexible load is running.",
-        },
-        {
-            "number": 4,
-            "title": "Shed lowest-priority homes",
-            "action": f"Cut power to {len(shed)} homes, lowest priority first." if shed
-                      else "Cut power to the lowest-priority homes.",
-            "impact": "These homes lose power. Critical homes (medical, cold storage, phones) "
-                      "are never on this list.",
-            "kw": step4_kw,
-            "targets": [r["battery_id"] for r in shed],
-            "nothing_to_do": "the steps above are enough, or shedding wouldn't help.",
-        },
+        {"number": 1, "title": "Pause battery charging",
+         "action": f"Tell {len(charging)} charging batteries to stop pulling power from the grid.",
+         "impact": "Nobody notices. Batteries just fill up a little later.",
+         "kw": step1_kw, "targets": [r["battery_id"] for r in charging],
+         "nothing_to_do": "no batteries are charging."},
+        {"number": 2, "title": "Batteries discharge to support the zone",
+         "action": f"Ask {len(extra)} batteries to push out more power for the next {SUPPORT_HOURS} hour.",
+         "impact": f"Nobody notices. Medical and vulnerable homes keep their batteries, and every "
+                   f"battery keeps at least {RESERVE_PCT}% for its own home.",
+         "kw": step2_kw, "targets": sorted(extra),
+         "nothing_to_do": "batteries are already giving all they can spare."},
+        {"number": 3, "title": "Ask flexible homes to delay usage",
+         "action": f"Ask {len(flexible)} flexible homes to pause EV charging and pool pumps "
+                   f"and nudge their thermostat.",
+         "impact": "Small inconvenience. They catch up later in the evening.",
+         "kw": step3_kw, "targets": [r["battery_id"] for r in flexible],
+         "nothing_to_do": "no flexible load is running."},
+        {"number": 4, "title": "Shed regular homes",
+         "action": (f"Cut power to {len(shed4)} regular fleet homes (EV/pool first)"
+                    + (f" and {blocks} street block{'s' if blocks != 1 else ''} of other homes "
+                       f"(about {blocks * HOMES_PER_BLOCK} homes)" if blocks else "") + "."),
+         "impact": "These homes lose power for a while. Vulnerable and medical homes are not on this list.",
+         "kw": step4_kw,
+         "targets": [r["battery_id"] for r in shed4]
+                    + [f"Street block {n} (other customers)" for n in range(1, blocks + 1)],
+         "nothing_to_do": "the steps above are enough, or cutting homes wouldn't help."},
+        {"number": 5, "title": "Shed vulnerable homes",
+         "action": f"Cut power to {len(shed5)} elderly / heat-vulnerable homes.",
+         "impact": "Serious: call these residents first. Medical homes are never on this list.",
+         "kw": step5_kw, "targets": [r["battery_id"] for r in shed5],
+         "nothing_to_do": "not needed, or it wouldn't help."},
+        {"number": 6, "title": "Critical buildings switch to backup power",
+         "action": f"Ask {len(on_backup)} critical buildings to run on their own backup for a while.",
+         "impact": "Nobody loses power, but it uses up their emergency backup. Protected last.",
+         "kw": step6_kw,
+         "targets": [f"{b['name']} ({b['backup'].lower()}, {b['backup_hours']} h)" for b in on_backup],
+         "nothing_to_do": "not needed, or no building here has its own backup."},
     ]
 
     # For each step: is it still needed after the steps before it?
@@ -381,12 +413,17 @@ def relief_plan(readings, at_time):
     for s in steps:
         s["needed"] = freed < needed and s["kw"] > 0
         freed += s["kw"]
-        s["kw_so_far"] = freed
-        s["stress_after"] = stress_after(stress, freed)
+        s["stress_after"] = stress_after(load, capacity, freed)
 
-    # If all four steps together still fall short, say so honestly
-    shortfall = max(0.0, needed - freed)
-    return {"stress": stress, "needed_kw": needed, "steps": steps, "shortfall_kw": shortfall}
+    # If all the steps together still fall short, say so honestly
+    return {"zone": zone, "stress": stress, "load_kw": load, "capacity_kw": capacity,
+            "needed_kw": needed, "steps": steps, "shortfall_kw": max(0.0, needed - freed)}
+
+
+def relief_plans(readings, at_time):
+    """Relief plans for every strained zone, most strained first (handle that one first)."""
+    plans = [relief_plan(readings, at_time, zone) for zone in simulator.ZONES]
+    return sorted([p for p in plans if p], key=lambda p: -p["stress"])
 
 
 # ---------------------------------------------------------------------------
@@ -431,7 +468,7 @@ def summary(readings, at_time, results, approved_steps=()):
         status  - how many batteries need attention, and why
         outlook - what the grid is doing now and over the next few hours
         action  - what to do first
-    approved_steps: relief plan step numbers already approved at this time.
+    approved_steps: (zone, step number) pairs already approved at this time.
     """
     # --- Status: count and name the urgent batteries ---
     needs = sorted([r for r in results if r["category"] == NEEDS_DISPATCHER],
@@ -456,46 +493,61 @@ def summary(readings, at_time, results, approved_steps=()):
     # --- Outlook: use the grid forecast for the next few hours ---
     # (In the simulator we know the rest of the day; a real dispatcher gets this from
     # the utility's load forecast.)
+    # Each zone's stress over the day: {zone: {time: stress}}
     stress_at = {}
     for r in readings:
-        stress_at.setdefault(r["time"], r["grid_stress"])
-    times = sorted(stress_at)
+        stress_at.setdefault(r["zone"], {})[r["time"]] = r["zone_stress"]
+    times = sorted(next(iter(stress_at.values())))
     i = times.index(at_time)
     ahead = times[i + 1: i + 1 + LOOKAHEAD_HOURS * 60 // simulator.STEP_MINUTES]
-    now_stress = stress_at[at_time]
-    strained_now = now_stress >= STRAINED_GRID
-    coming = next((t for t in ahead if stress_at[t] >= STRAINED_GRID), None)
 
-    if strained_now:
-        eases = next((t for t in times[i + 1:] if stress_at[t] < STRAINED_GRID), None)
-        outlook = f"Grid is **strained now** ({now_stress:.0f}/100)"
-        outlook += (f", expected to ease around {clock(eases)}." if eases
-                    else " for the rest of the day.")
+    strained = sorted([z for z in stress_at if stress_at[z][at_time] >= STRAINED_GRID],
+                      key=lambda z: -stress_at[z][at_time])         # most strained first
+    # Zones that aren't strained yet but will be soon: {zone: first strained time}
+    coming = {}
+    for z in stress_at:
+        if z not in strained:
+            t = next((t for t in ahead if stress_at[z][t] >= STRAINED_GRID), None)
+            if t:
+                coming[z] = t
+
+    if strained:
+        listed = ", ".join(f"{z} ({stress_at[z][at_time]:.0f}% of capacity)" for z in strained)
+        outlook = f"**{plural(len(strained), 'zone')} strained now:** {listed}."
+        eases = next((t for t in times[i + 1:]
+                      if all(stress_at[z][t] < STRAINED_GRID for z in stress_at)), None)
+        if coming:
+            z, t = min(coming.items(), key=lambda kv: kv[1])
+            outlook += f" {z} expected to join at {clock(t)}."
+        outlook += f" Expected to ease around {clock(eases)}." if eases else " Strain lasts the rest of the day."
     elif coming:
-        peak = max(stress_at[t] for t in ahead)
-        outlook = (f"**Heat wave expected at {clock(coming)}.** Grid stress will climb to "
-                   f"about {peak:.0f}/100.")
+        z, t = min(coming.items(), key=lambda kv: kv[1])
+        peak = max(stress_at[z][t2] for t2 in ahead)
+        outlook = f"**{z} expected to be strained at {clock(t)}** (up to {peak:.0f}% of capacity)."
+        if len(coming) > 1:
+            outlook += f" {len(coming) - 1} more zone{'s' if len(coming) > 2 else ''} later."
     else:
-        outlook = f"Grid looks calm for the next {LOOKAHEAD_HOURS} hours."
+        outlook = f"All zones look calm for the next {LOOKAHEAD_HOURS} hours."
 
-    # --- Action: grid first (it affects everyone), then the urgent batteries ---
+    # --- Action: strained zones first (most strained first), then the urgent batteries ---
     actions = []
-    if strained_now:
-        plan = relief_plan(readings, at_time)
-        todo = [s for s in plan["steps"] if s["needed"] and s["number"] not in approved_steps]
+    for plan in relief_plans(readings, at_time)[:2]:
+        z = plan["zone"]
+        todo = [s for s in plan["steps"] if s["needed"] and (z, s["number"]) not in approved_steps]
         if todo:
             s = todo[0]
-            text = f"approve relief step {s['number']}, {s['title'].lower()} (frees about {s['kw']:.0f} kW)"
-            shed_needed = plan["steps"][3]["needed"]
+            text = f"in {z}, approve step {s['number']}: {s['title'].lower()} (frees about {s['kw']:.0f} kW)"
+            cuts_needed = any(st["needed"] for st in plan["steps"][3:5])
             if s["number"] < 4:
-                text += "; shedding may still be needed after that" if shed_needed else "; nobody needs to lose power"
+                text += "; homes may still need cutting after that" if cuts_needed else "; nobody needs to lose power"
             actions.append(text)
         elif plan["shortfall_kw"] > 0:
-            actions.append(f"relief steps approved but still {plan['shortfall_kw']:.0f} kW short; escalate to the utility")
+            actions.append(f"in {z}, all steps approved but still {plan['shortfall_kw']:.0f} kW short; escalate to the utility")
         else:
-            actions.append("relief steps approved; keep an eye on grid stress")
-    elif coming:
-        actions.append(f"let batteries finish charging before {clock(coming)} so they're full when the heat hits")
+            actions.append(f"in {z}, relief steps approved; keep an eye on it")
+    if not strained and coming:
+        z, t = min(coming.items(), key=lambda kv: kv[1])
+        actions.append(f"let batteries in {z} finish charging before {clock(t)} so they're full when the strain hits")
 
     singles = [r for r in single if r not in low or len(low) < 3]
     actions += [problem_and_action(r)[2] for r in singles[:2]]
@@ -510,7 +562,7 @@ def summary(readings, at_time, results, approved_steps=()):
     else:
         action = "**Recommended:** nothing right now. Batteries are earning on their normal schedule."
 
-    level = "error" if needs or strained_now else "warning" if watch or coming else "ok"
+    level = "error" if needs or strained else "warning" if watch or coming else "ok"
     return {"status": status, "outlook": outlook, "action": action, "level": level}
 
 
