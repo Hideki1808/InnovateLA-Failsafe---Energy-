@@ -1,0 +1,21 @@
+# Look and feel of the dashboard. Built for a projector: light background,
+# dark text, a larger base font, and one set of status colors used everywhere.
+
+[theme]
+base = "light"
+primaryColor = "#334155"             # slate: buttons and the slider (neutral, so it never looks like a status)
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f1f5f9"
+textColor = "#0f172a"
+baseFontSize = 18                    # a bit bigger than normal, readable from the back of the room
+
+# Status colors: the same ones as the map dots (app.py STATE_COLORS)
+greenColor = "#28aa5a"               # Normal
+yellowColor = "#e0b000"              # Watch
+blueColor = "#2878dc"                # Can wait
+redColor = "#dc3232"                 # Needs dispatcher / strained
+orangeColor = "#f5781e"              # vulnerable homes / busy zones
+violetColor = "#8c46d2"              # medical homes
+
+[client]
+toolbarMode = "minimal"              # hide the developer menu during the demo

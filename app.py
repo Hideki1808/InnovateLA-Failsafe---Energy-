@@ -21,7 +21,7 @@ started = time.time()   # used by Play to keep a steady pace
 # A colored dot for each category, so the table is easy to scan
 ICONS = {
     rules.NEEDS_DISPATCHER: "🔴 Needs dispatcher",
-    rules.WATCH: "🟠 Watch",
+    rules.WATCH: "🟡 Watch",
     rules.CAN_WAIT: "🔵 Can wait",
     rules.NORMAL: "🟢 Normal",
 }
@@ -43,11 +43,15 @@ def run_rules(at_time):
 readings = load_readings()
 data = pd.DataFrame(readings)
 
-st.title("Home Battery Fleet")
-
-# While the page redraws (every step of Play), Streamlit normally fades everything out
-# for a moment. That makes the map and numbers flicker, so turn the fade off.
-st.html("<style>[data-stale='true'] { opacity: 1 !important; transition: none !important; }</style>")
+# Page-wide style tweaks:
+#  - while the page redraws (every step of Play), Streamlit normally fades everything out
+#    for a moment, which makes the map and numbers flicker: turn that off
+#  - less empty space at the top, so the map fits on a projector screen
+st.html("""<style>
+  [data-stale='true'] { opacity: 1 !important; transition: none !important; }
+  [data-testid='stMainBlockContainer'], .block-container { padding-top: 1.2rem !important; }
+</style>""")
+st.markdown("### ⚡ Home Battery Fleet · Wilmington dispatch")
 
 live_tab, earn_tab = st.tabs(["⚡ Live dispatch", "💰 Normal day earnings"])
 
@@ -106,22 +110,24 @@ with live_tab:
     for zone, stress in current.groupby("zone")["zone_stress"].first().items():
         if stress >= rules.STRAINED_GRID:
             events.append((f"strained:{zone}", f"🌡️ {zone} is strained ({stress:.0f}% of capacity). "
-                                               f"Its relief plan is ready below."))
+                                               f"See its plan in the Response ladder tab."))
     new_events = [(k, msg) for k, msg in events if k not in st.session_state.seen]
     st.session_state.seen |= {k for k, _ in events}
 
-    c1, c2, c3, c4, c5 = st.columns([1.3, 1.1, 1.1, 2, 2.5], vertical_alignment="center")
+    # One row: Play / Step / Reset, the time slider, speed, and auto-pause
+    c1, c2, c3, c_slider, c4, c5 = st.columns([1.1, 1, 1.1, 3.4, 2.6, 1.8], vertical_alignment="center")
     c1.button("⏸ Pause" if st.session_state.playing else "▶ Play", on_click=toggle_play,
               type="primary", width="stretch")
     c2.button("⏭ Step", on_click=step_forward, width="stretch", help="Move forward 15 minutes")
     c3.button("⏮ Reset", on_click=jump_to, args=(DEMO_START,), width="stretch",
               help="Back to 12:00, before the heat wave")
-    speed = c4.radio("Speed", list(SPEEDS), index=1, horizontal=True, label_visibility="collapsed")
-    pause_on_events = c5.checkbox("Pause on new events", value=True,
+    speed = c4.segmented_control("Speed", list(SPEEDS), default="Normal", required=True,
+                                 label_visibility="collapsed")
+    pause_on_events = c5.checkbox("Auto-pause", value=True,
                                   help="Stop playing when a battery goes silent, needs the dispatcher, or a zone gets strained")
 
-    st.select_slider("Time of day", options=times, key="now",
-                     format_func=lambda t: t[11:])   # show just "16:30"
+    c_slider.select_slider("Time of day", options=times, key="now", label_visibility="collapsed",
+                           format_func=lambda t: t[11:])   # show just "16:30"
 
     # While playing, pop up each new event and (optionally) pause so the presenter can talk
     if st.session_state.playing and new_events:
@@ -138,341 +144,352 @@ with live_tab:
     if st.session_state.pause_note:
         pause_slot.info(f"⏸ **Paused at {now[11:]}.** {st.session_state.pause_note} Press Play to continue.")
 
-    # --- Dispatcher summary: three plain-English lines, written by the rules ---
-    st.session_state.setdefault("approved", set())
-    approved_now = {(zone, n) for t, zone, n in st.session_state.approved if t == now}
-    brief = rules.summary(readings, now, results.to_dict("records"), approved_now)
-    box = {"ok": st.success, "warning": st.warning, "error": st.error}[brief["level"]]
-    box(f"**📋 At {rules.clock(now)}:** {brief['status']}  \n"
-        f"{brief['outlook']}  \n"
-        f"{brief['action']}")
-
-    # --- Map: zones lightly shaded by how strained they are, homes colored by category ---
-    dark = st.context.theme.type == "dark"
-    ink = [235, 235, 230] if dark else [40, 40, 38]            # label color that reads on the map
-
-    zone_now = current.groupby("zone")[["zone_stress"]].first()["zone_stress"]
-    zone_rows = []
-    for name, z in simulator.ZONES.items():
-        stress = zone_now[name]
-        if stress >= rules.STRAINED_GRID:
-            fill, state = [220, 50, 50, 60], "Strained"
-        elif stress >= rules.BUSY_GRID:
-            fill, state = [245, 170, 30, 50], "Busy"
-        else:
-            fill, state = [120, 140, 170, 45], "OK"
-        corners = [[lon, lat] for lat, lon in z["shape"]]
-        zone_rows.append({
-            "polygon": corners, "fill": fill, "label": f"{name}: {stress:.0f}%",
-            # Label in the zone's top-left corner, out of the way of the dots
-            "lat": max(p[1] for p in corners), "lon": min(p[0] for p in corners),
-            "title": name, "line1": f"Zone {state.lower()}: using {stress:.0f}% of its capacity", "line2": "",
-        })
-
-    FADE_MS = 600   # how long a dot or zone takes to fade to its new color
-
-    # Dot fill = battery state. Ring = household type (none for regular homes).
-    STATE_COLORS = {rules.NORMAL: [40, 170, 90], rules.WATCH: [240, 200, 40],
-                    rules.CAN_WAIT: [40, 120, 220], rules.NEEDS_DISPATCHER: [220, 50, 50]}
-    RING_COLORS = {"vulnerable": [245, 120, 30], "medical": [140, 70, 210]}
-    BUILDING_COLOR = [90, 100, 120]
-    home_rows = []
-    for _, r in current.merge(results[["battery_id", "category", "reason"]], on="battery_id").iterrows():
-        home_rows.append({
-            "lat": r["lat"], "lon": r["lon"], "color": STATE_COLORS[r["category"]],
-            "household_type": r["household_type"],
-            "ring": RING_COLORS.get(r["household_type"], [0, 0, 0, 0]),
-            "title": f"{r['battery_id']} · {r['household_type']} home · {r['zone']}",
-            "line1": f"Battery: {r['category']}"
-                     + (f", {r['charge_pct']:.0f}% charged" if pd.notna(r["charge_pct"]) else ", not reporting"),
-            "line2": r["reason"],
-        })
-    vulnerable_rows = [h for h in home_rows if h["household_type"] == "vulnerable"]
-    medical_rows = [h for h in home_rows if h["household_type"] == "medical"]
-
-    # Critical buildings are squares about 70 m across (corners worked out in degrees)
-    half_lat, half_lon = 35 / 111_320, 35 / 92_530
-    building_rows = [{
-        "lat": b["lat"], "lon": b["lon"], "label": b["name"],
-        "square": [[b["lon"] - half_lon, b["lat"] - half_lat], [b["lon"] + half_lon, b["lat"] - half_lat],
-                   [b["lon"] + half_lon, b["lat"] + half_lat], [b["lon"] - half_lon, b["lat"] + half_lat]],
-        "title": f"{b['name']} · critical building · {b['zone']}",
-        "line1": f"Uses about {b['load_kw']} kW. Backup: {b['backup'].lower()}"
-                 + (f", {b['backup_hours']} h" if b["backup_hours"] else ""),
-        "line2": "Protected last: never cut off.",
-    } for b in simulator.critical_buildings()]
-
-    def dots(data, radius_m, min_px, max_px, color, pickable=False):
-        """A layer of round dots. Rings are drawn as a slightly bigger dot underneath.
-        When a dot changes color it fades over FADE_MS instead of jumping."""
-        return pdk.Layer("ScatterplotLayer", data, get_position=["lon", "lat"], get_fill_color=color,
-                         get_radius=radius_m, radius_min_pixels=min_px, radius_max_pixels=max_px,
-                         pickable=pickable, transitions={"getFillColor": FADE_MS})
-
-    layers = [
-        # Zones: lightly shaded, with their name and stress in the corner
-        pdk.Layer("PolygonLayer", zone_rows, get_polygon="polygon", get_fill_color="fill",
-                  get_line_color=ink + [90], line_width_min_pixels=1, pickable=True,
-                  transitions={"getFillColor": FADE_MS}),
-        pdk.Layer("TextLayer", zone_rows, get_position=["lon", "lat"], get_text="label",
-                  get_color=ink, get_size=14, font_weight=600, get_text_anchor="'start'",
-                  get_alignment_baseline="'top'", get_pixel_offset=[6, 6]),
-        # Critical buildings: larger squares with their name beside them
-        pdk.Layer("PolygonLayer", building_rows, get_polygon="square", get_fill_color=BUILDING_COLOR,
-                  get_line_color=[255, 255, 255], line_width_min_pixels=2, pickable=True),
-        pdk.Layer("TextLayer", building_rows, get_position=["lon", "lat"], get_text="label", get_color=ink,
-                  get_size=12, font_weight=600, get_text_anchor="'start'", get_pixel_offset=[14, 0]),
-        # Homes: rings first (thick purple for medical, orange for vulnerable), then the dot on top
-        dots(medical_rows, 60, 11, 16, "ring"),
-        dots(vulnerable_rows, 48, 9, 13, "ring"),
-        dots(home_rows, 32, 6, 9, "color", pickable=True),
-    ]
-    st.pydeck_chart(pdk.Deck(
-        layers=layers,
-        initial_view_state=pdk.ViewState(latitude=33.7885, longitude=-118.2630, zoom=14.6),
-        map_style="dark" if dark else "light",
-        # Hover box: the formatting lives here; each row just supplies plain title/line1/line2
-        tooltip={"html": "<b>{title}</b><br/>{line1}<br/>{line2}",
-                 "style": {"maxWidth": "320px", "fontSize": "13px"}},
-    ), height=480, key="fleet_map")   # same key every time = update the map in place, keep your zoom
-
-    # Legend: what every color and shape means
-    def swatch(fill, ring=None, ring_px=0, square=False):
-        css = f"rgb({fill[0]},{fill[1]},{fill[2]})"
-        border = f"{ring_px}px solid rgb({ring[0]},{ring[1]},{ring[2]})" if ring else "1px solid transparent"
-        shape = "2px" if square else "50%"
-        return (f'<span style="display:inline-block;width:12px;height:12px;background:{css};'
-                f'border:{border};border-radius:{shape};vertical-align:middle;margin:0 6px 0 14px"></span>')
-    grey = [150, 150, 150]
-    st.html(
-        '<div style="font-size:13px;line-height:2;opacity:.9">'
-        "<b>Battery (dot color):</b>"
-        f"{swatch(STATE_COLORS[rules.NORMAL])}Normal"
-        f"{swatch(STATE_COLORS[rules.WATCH])}Watch"
-        f"{swatch(STATE_COLORS[rules.CAN_WAIT])}Can wait"
-        f"{swatch(STATE_COLORS[rules.NEEDS_DISPATCHER])}Needs dispatcher<br/>"
-        "<b>Household (ring):</b>"
-        f"{swatch(grey)}Regular (no ring)"
-        f"{swatch(grey, RING_COLORS['vulnerable'], 2)}Vulnerable"
-        f"{swatch(grey, RING_COLORS['medical'], 4)}Medical (thick)"
-        f"{swatch(BUILDING_COLOR, [255, 255, 255], 2, square=True)}Critical building<br/>"
-        "<b>Zone (shading):</b>"
-        f"{swatch([120, 140, 170], square=True)}OK"
-        f"{swatch([245, 170, 30], square=True)}Busy (70%+ of capacity)"
-        f"{swatch([220, 50, 50], square=True)}Strained (80%+)"
-        '<span style="margin-left:14px;opacity:.7">Hover anything on the map for details.</span>'
-        "</div>"
-    )
-
-    # --- Top numbers: what the rules say ---
+    # --- Key numbers across the top: big and few, readable from the back of the room ---
     counts = results["category"].value_counts()
-    cols = st.columns(4)
-    for col, category in zip(cols, ICONS):
-        col.metric(ICONS[category], int(counts.get(category, 0)))
+    zone_stress_now = current.groupby("zone")["zone_stress"].first()
+    strained_zones = int((zone_stress_now >= rules.STRAINED_GRID).sum())
+    worst_zone = zone_stress_now.idxmax()
+    k = st.columns(6)
+    k[0].metric("🕒 Time", rules.clock(now))
+    k[1].metric(ICONS[rules.NEEDS_DISPATCHER], int(counts.get(rules.NEEDS_DISPATCHER, 0)))
+    k[2].metric(ICONS[rules.WATCH], int(counts.get(rules.WATCH, 0)))
+    k[3].metric(ICONS[rules.CAN_WAIT], int(counts.get(rules.CAN_WAIT, 0)))
+    k[4].metric("🔥 Zones strained", f"{strained_zones} of {len(zone_stress_now)}")
+    k[5].metric("📈 Busiest zone", f"{zone_stress_now[worst_zone]:.0f}%", worst_zone,
+                delta_color="off", delta_arrow="off",
+                help="Share of the zone's capacity being used right now")
 
-    # --- Fleet numbers ---
-    row = current.iloc[0]
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total homes", current["home_id"].nunique())
-    col2.metric("Average charge", f"{current['charge_pct'].mean():.0f}%")
-    col3.metric("Batteries not reporting", int((~current["battery_reporting"]).sum()))
-    worst = current.loc[current["zone_stress"].idxmax()]
-    col4.metric("Most strained zone", f"{worst['zone_stress']:.0f}%", worst["zone"],
-                delta_color="off", help="Share of the zone's capacity being used right now")
-    # (Average charge only counts batteries that are reporting.)
+    # --- Main area: big map on the left, side panel with what to do on the right ---
+    left, right = st.columns([1.9, 1.1], gap="large")
 
-    # --- Alerts: everything that isn't Normal, most urgent first ---
-    st.subheader("Alerts")
-    alerts = results[results["category"] != rules.NORMAL].copy()   # (the rules already give each zone)
-    alerts["severity"] = alerts["category"].map(SEVERITY)
-    # Most urgent category first; inside a category, critical homes first
-    alerts = alerts.sort_values(["severity", "wait_order", "battery_id"], ascending=[True, False, True])
+    with left:
+        # --- Map: zones lightly shaded by how strained they are, homes colored by category ---
+        dark = False   # the dashboard uses a light theme (see .streamlit/config.toml), so a light map
+        ink = [235, 235, 230] if dark else [40, 40, 38]            # label color that reads on the map
 
-    if alerts.empty:
-        st.success("All clear: every battery is normal right now.")
-    else:
-        # Scrollable box so a long list doesn't push the rest of the page down
-        with st.container(height=380):
-            for _, a in alerts.iterrows():
-                guess = f" · silent: **{a['silent_guess']}**" if pd.notna(a["silent_guess"]) else ""
-                text = (f"**{a['battery_id']}** · {a['household_type']} · {a['zone']}{guess}  \n"
-                        f"{a['reason']}")
-                if a["category"] == rules.NEEDS_DISPATCHER:
-                    st.error(text, icon="🔴")
-                elif a["category"] == rules.WATCH:
-                    st.warning(text, icon="🟠")
-                else:
-                    st.info(text, icon="🔵")
+        zone_now = current.groupby("zone")[["zone_stress"]].first()["zone_stress"]
+        zone_rows = []
+        for name, z in simulator.ZONES.items():
+            stress = zone_now[name]
+            if stress >= rules.STRAINED_GRID:
+                fill, state = [220, 50, 50, 60], "Strained"
+            elif stress >= rules.BUSY_GRID:
+                fill, state = [245, 170, 30, 50], "Busy"
+            else:
+                fill, state = [120, 140, 170, 45], "OK"
+            corners = [[lon, lat] for lat, lon in z["shape"]]
+            zone_rows.append({
+                "polygon": corners, "fill": fill, "label": f"{name}: {stress:.0f}%",
+                # Label in the zone's top-left corner, out of the way of the dots
+                "lat": max(p[1] for p in corners), "lon": min(p[0] for p in corners),
+                "title": name, "line1": f"Zone {state.lower()}: using {stress:.0f}% of its capacity", "line2": "",
+            })
 
-    # --- Zone relief plans: gentle steps before shedding, one zone at a time ---
-    st.subheader("Zone relief plans")
+        FADE_MS = 600   # how long a dot or zone takes to fade to its new color
 
-    # Remember which steps the dispatcher approved, as (time, zone, step) — survives
-    # clicks, resets on page reload
-    if "approved" not in st.session_state:
-        st.session_state.approved = set()
+        # Dot fill = battery state. Ring = household type (none for regular homes).
+        STATE_COLORS = {rules.NORMAL: [40, 170, 90], rules.WATCH: [240, 200, 40],
+                        rules.CAN_WAIT: [40, 120, 220], rules.NEEDS_DISPATCHER: [220, 50, 50]}
+        RING_COLORS = {"vulnerable": [245, 120, 30], "medical": [140, 70, 210]}
+        BUILDING_COLOR = [90, 100, 120]
+        home_rows = []
+        for _, r in current.merge(results[["battery_id", "category", "reason"]], on="battery_id").iterrows():
+            home_rows.append({
+                "lat": r["lat"], "lon": r["lon"], "color": STATE_COLORS[r["category"]],
+                "household_type": r["household_type"],
+                "ring": RING_COLORS.get(r["household_type"], [0, 0, 0, 0]),
+                "title": f"{r['battery_id']} · {r['household_type']} home · {r['zone']}",
+                "line1": f"Battery: {r['category']}"
+                         + (f", {r['charge_pct']:.0f}% charged" if pd.notna(r["charge_pct"]) else ", not reporting"),
+                "line2": r["reason"],
+            })
+        vulnerable_rows = [h for h in home_rows if h["household_type"] == "vulnerable"]
+        medical_rows = [h for h in home_rows if h["household_type"] == "medical"]
 
+        # Critical buildings are squares about 70 m across (corners worked out in degrees)
+        half_lat, half_lon = 35 / 111_320, 35 / 92_530
+        building_rows = [{
+            "lat": b["lat"], "lon": b["lon"], "label": b["name"],
+            "square": [[b["lon"] - half_lon, b["lat"] - half_lat], [b["lon"] + half_lon, b["lat"] - half_lat],
+                       [b["lon"] + half_lon, b["lat"] + half_lat], [b["lon"] - half_lon, b["lat"] + half_lat]],
+            "title": f"{b['name']} · critical building · {b['zone']}",
+            "line1": f"Uses about {b['load_kw']} kW. Backup: {b['backup'].lower()}"
+                     + (f", {b['backup_hours']} h" if b["backup_hours"] else ""),
+            "line2": "Protected last: never cut off.",
+        } for b in simulator.critical_buildings()]
 
-    def approve(key):
-        st.session_state.approved.add(key)
+        def dots(data, radius_m, min_px, max_px, color, pickable=False):
+            """A layer of round dots. Rings are drawn as a slightly bigger dot underneath.
+            When a dot changes color it fades over FADE_MS instead of jumping."""
+            return pdk.Layer("ScatterplotLayer", data, get_position=["lon", "lat"], get_fill_color=color,
+                             get_radius=radius_m, radius_min_pixels=min_px, radius_max_pixels=max_px,
+                             pickable=pickable, transitions={"getFillColor": FADE_MS})
 
+        layers = [
+            # Zones: lightly shaded, with their name and stress in the corner
+            pdk.Layer("PolygonLayer", zone_rows, get_polygon="polygon", get_fill_color="fill",
+                      get_line_color=ink + [90], line_width_min_pixels=1, pickable=True,
+                      transitions={"getFillColor": FADE_MS}),
+                # Critical buildings: larger squares with their name beside them
+            pdk.Layer("PolygonLayer", building_rows, get_polygon="square", get_fill_color=BUILDING_COLOR,
+                      get_line_color=[255, 255, 255], line_width_min_pixels=2, pickable=True),
+            pdk.Layer("TextLayer", building_rows, get_position=["lon", "lat"], get_text="label", get_color=ink,
+                      get_size=14, font_weight=600, get_text_anchor="'start'", get_pixel_offset=[14, 0]),
+            # Homes: rings first (thick purple for medical, orange for vulnerable), then the dot on top
+            dots(medical_rows, 60, 11, 16, "ring"),
+            dots(vulnerable_rows, 48, 9, 13, "ring"),
+            dots(home_rows, 32, 6, 9, "color", pickable=True),
+            # Zone names last, on a white tag, so no dot ever covers them
+            pdk.Layer("TextLayer", zone_rows, get_position=["lon", "lat"], get_text="label",
+                      get_color=ink, get_size=16, font_weight=700, get_text_anchor="'start'",
+                      get_alignment_baseline="'top'", get_pixel_offset=[6, 6],
+                      background=True, get_background_color=[255, 255, 255, 220], background_padding=[4, 2]),
+        ]
+        st.pydeck_chart(pdk.Deck(
+            layers=layers,
+            initial_view_state=pdk.ViewState(latitude=33.7885, longitude=-118.2630, zoom=14.15),
+            map_style="dark" if dark else "light",
+            # Hover box: the formatting lives here; each row just supplies plain title/line1/line2
+            tooltip={"html": "<b>{title}</b><br/>{line1}<br/>{line2}",
+                     "style": {"maxWidth": "340px", "fontSize": "15px"}},
+        ), height=560, key="fleet_map")   # same key every time = update the map in place, keep your zoom
 
-    def reset_approvals():
-        st.session_state.approved = set()
-
-
-    # Every zone at a glance
-    zone_now = current.groupby("zone", sort=False)[["zone_stress", "zone_load_kw", "zone_capacity_kw"]].first()
-    cols = st.columns(len(zone_now))
-    for col, (zone, z) in zip(cols, zone_now.iterrows()):
-        state = "Strained" if z["zone_stress"] >= rules.STRAINED_GRID else "Busy" if z["zone_stress"] >= rules.BUSY_GRID else "OK"
-        col.metric(zone, f"{z['zone_stress']:.0f}%", state,
-                   delta_color="off" if state == "OK" else "inverse",
-                   help=f"Drawing {z['zone_load_kw']:.0f} kW of its {z['zone_capacity_kw']:.0f} kW capacity")
-
-    plans = rules.relief_plans(readings, now)
-
-    if not plans:
-        st.success("No zone is strained right now. No relief steps needed.")
-    else:
-        st.warning(
-            f"**{rules.plural(len(plans), 'zone')} strained.** Most strained first. In each zone, try the "
-            f"gentle steps first, in order; medical homes and critical buildings are protected last. "
-            f"**Nothing happens until you click Approve.**"
+        # Legend: what every color and shape means
+        def swatch(fill, ring=None, ring_px=0, square=False):
+            css = f"rgb({fill[0]},{fill[1]},{fill[2]})"
+            border = f"{ring_px}px solid rgb({ring[0]},{ring[1]},{ring[2]})" if ring else "1px solid transparent"
+            shape = "2px" if square else "50%"
+            return (f'<span style="display:inline-block;width:12px;height:12px;background:{css};'
+                    f'border:{border};border-radius:{shape};vertical-align:middle;margin:0 6px 0 14px"></span>')
+        grey = [150, 150, 150]
+        st.html(
+            '<div style="font-size:15px;line-height:2">'
+            "<b>Battery (dot color):</b>"
+            f"{swatch(STATE_COLORS[rules.NORMAL])}Normal"
+            f"{swatch(STATE_COLORS[rules.WATCH])}Watch"
+            f"{swatch(STATE_COLORS[rules.CAN_WAIT])}Can wait"
+            f"{swatch(STATE_COLORS[rules.NEEDS_DISPATCHER])}Needs dispatcher<br/>"
+            "<b>Household (ring):</b>"
+            f"{swatch(grey)}Regular (no ring)"
+            f"{swatch(grey, RING_COLORS['vulnerable'], 2)}Vulnerable"
+            f"{swatch(grey, RING_COLORS['medical'], 4)}Medical (thick)"
+            f"{swatch(BUILDING_COLOR, [255, 255, 255], 2, square=True)}Critical building<br/>"
+            "<b>Zone (shading):</b>"
+            f"{swatch([120, 140, 170], square=True)}OK"
+            f"{swatch([245, 170, 30], square=True)}Busy (70%+ of capacity)"
+            f"{swatch([220, 50, 50], square=True)}Strained (80%+)"
+            '<span style="margin-left:14px;opacity:.7">Hover anything on the map for details.</span>'
+            "</div>"
         )
 
-    for i, plan in enumerate(plans):
-        zone = plan["zone"]
-        approved_kw = sum(s["kw"] for s in plan["steps"] if (now, zone, s["number"]) in st.session_state.approved)
-        label = (f"🔥 {zone}: {plan['stress']:.0f}% of capacity, needs about {plan['needed_kw']:.0f} kW "
-                 f"to get back under {rules.STRAINED_GRID}%")
-        with st.expander(label, expanded=(i == 0)):
-            c1, c2 = st.columns(2)
-            c1.metric("Relief approved", f"{approved_kw:.0f} of {plan['needed_kw']:.0f} kW")
-            c2.metric("Zone stress after approved steps",
-                      f"{rules.stress_after(plan['load_kw'], plan['capacity_kw'], approved_kw):.0f}%")
 
-            # A step can only be approved once every earlier step that's needed has been approved.
-            # That's what stops anyone jumping straight to cutting power.
-            earlier_done = True
-            for s in plan["steps"]:
-                key = (now, zone, s["number"])
-                done = key in st.session_state.approved
+    with right:
+        # --- Dispatcher summary: three plain-English lines, written by the rules ---
+        st.session_state.setdefault("approved", set())
+        approved_now = {(zone, n) for t, zone, n in st.session_state.approved if t == now}
+        brief = rules.summary(readings, now, results.to_dict("records"), approved_now)
+        box = {"ok": st.success, "warning": st.warning, "error": st.error}[brief["level"]]
+        box(f"**📋 What's happening:** {brief['status']}  \n"
+            f"{brief['outlook']}  \n"
+            f"{brief['action']}")
 
-                with st.container(border=True):
-                    left, right = st.columns([3, 1])
-                    left.markdown(f"**Step {s['number']}: {s['title']}**")
-                    if s["kw"] <= 0:
-                        left.caption("Nothing to do right now: " + s["nothing_to_do"])
-                        continue                      # skipped steps don't block later ones
-                    left.write(s["action"])
-                    left.caption(s["impact"])
-                    with left.expander(f"Which {len(s['targets'])}"):
-                        st.write(", ".join(s["targets"]))
-                    right.metric("Would free", f"{s['kw']:.0f} kW")
-                    right.caption(f"Zone stress after steps 1–{s['number']}: ≈{s['stress_after']:.0f}%")
+        alerts_tab, ladder_tab = st.tabs(["🚨 Alerts", "🪜 Response ladder"])
+        with alerts_tab:
+            # --- Alerts: everything that isn't Normal, most urgent first ---
+            alerts = results[results["category"] != rules.NORMAL].copy()   # (the rules already give each zone)
+            alerts["severity"] = alerts["category"].map(SEVERITY)
+            # Most urgent category first; inside a category, critical homes first
+            alerts = alerts.sort_values(["severity", "wait_order", "battery_id"], ascending=[True, False, True])
 
-                    if done:
-                        st.success(f"Approved. Command sent to {len(s['targets'])} (simulated).", icon="✅")
-                    elif not s["needed"]:
-                        st.caption("Not needed: the steps above already free enough.")
-                    elif not earlier_done:
-                        st.button("Approve", key=f"approve_{now}_{zone}_{s['number']}", disabled=True,
-                                  help="Approve the earlier steps first.")
-                    else:
-                        confirmed = True
-                        if s["number"] >= 4:
-                            # Cutting power or using emergency backup: ask for an extra confirmation
-                            what = ("these homes will lose power" if s["number"] < 6
-                                    else "these buildings will use up their emergency backup")
-                            confirmed = st.checkbox(f"I understand {what}.", key=f"confirm_{now}_{zone}_{s['number']}")
-                        st.button("Approve", key=f"approve_{now}_{zone}_{s['number']}", type="primary",
-                                  on_click=approve, args=(key,), disabled=not confirmed)
+            if alerts.empty:
+                st.success("All clear: every battery is normal right now.")
+            else:
+                # Scrollable box so a long list doesn't push the rest of the page down
+                with st.container(height=560, border=False):
+                    for _, a in alerts.iterrows():
+                        guess = f" · silent: **{a['silent_guess']}**" if pd.notna(a["silent_guess"]) else ""
+                        text = (f"**{a['battery_id']}** · {a['household_type']} · {a['zone']}{guess}  \n"
+                                f"{a['reason']}")
+                        if a["category"] == rules.NEEDS_DISPATCHER:
+                            st.error(text, icon="🔴")
+                        elif a["category"] == rules.WATCH:
+                            st.warning(text, icon="🟡")
+                        else:
+                            st.info(text, icon="🔵")
 
-                if s["needed"] and not done:
-                    earlier_done = False
+        with ladder_tab:
+            with st.container(height=560, border=False):
+                # --- Zone relief plans: gentle steps before shedding, one zone at a time ---
 
-            if plan["shortfall_kw"] > 0:
-                st.error(f"Even with every step, {zone} is still about {plan['shortfall_kw']:.0f} kW short. "
-                         f"Medical homes are never cut: escalate to the utility.")
+                # Remember which steps the dispatcher approved, as (time, zone, step) — survives
+                # clicks, resets on page reload
+                if "approved" not in st.session_state:
+                    st.session_state.approved = set()
 
-    if plans:
-        st.button("Reset approvals", on_click=reset_approvals)
 
-    # --- Chart: fleet charge over the day ---
-    st.subheader("Average fleet charge over the day")
-    over_time = data.groupby("time", as_index=False)["charge_pct"].mean()
-    over_time["clock"] = over_time["time"].str[11:]   # "16:30" instead of the full date
-    chart = alt.Chart(over_time).mark_line().encode(
-        x=alt.X("clock", title="Time", axis=alt.Axis(values=[t for t in over_time["clock"] if t.endswith(":00")])),
-        y=alt.Y("charge_pct", title="Average charge (%)", scale=alt.Scale(domain=[0, 100])),
-        tooltip=["clock", alt.Tooltip("charge_pct", format=".0f", title="Charge %")],
-    )
-    # A dot showing the time picked on the slider
-    marker = alt.Chart(over_time[over_time["time"] == now]).mark_point(size=120, filled=True, color="red").encode(
-        x="clock", y="charge_pct",
-    )
-    st.altair_chart(chart + marker, width="stretch")
-    st.caption("Batteries fill up on cheap midday solar, then drain during the 2–8 pm heat wave.")
+                def approve(key):
+                    st.session_state.approved.add(key)
 
-    # --- Table: every battery right now, most urgent first ---
-    st.subheader(f"All batteries at {now[11:]}")
-    table = current.merge(results[["battery_id", "category", "reason", "silent_guess", "wait_order"]], on="battery_id")
-    table["severity"] = table["category"].map(SEVERITY)
-    table = table.sort_values(["severity", "battery_id"])
-    table["category"] = table["category"].map(ICONS)
-    table["battery_status"] = table["battery_status"].fillna("no signal")
-    table["silent_guess"] = table["silent_guess"].fillna("")
-    table = table[[
-        "category", "battery_id", "reason", "silent_guess", "household_type", "priority", "zone",
-        "battery_status", "charge_pct", "battery_kw", "inverter_temp_c", "home_usage_kw", "from_grid_kw",
-    ]].rename(columns={
-        "category": "Category",
-        "battery_id": "Battery",
-        "reason": "Why",
-        "silent_guess": "Silent: best guess",
-        "household_type": "Household",
-        "priority": "Priority",
-        "zone": "Zone",
-        "battery_status": "Status",
-        "charge_pct": "Charge %",
-        "battery_kw": "Battery kW",
-        "inverter_temp_c": "Temp °C",
-        "home_usage_kw": "Home uses kW",
-        "from_grid_kw": "From grid kW",
-    })
-    st.dataframe(
-        table, hide_index=True, width="stretch", height=600,
-        column_config={"Why": st.column_config.TextColumn(width="large")},
-    )
 
-    # --- Waiting list: whose power can wait, in order ---
-    st.subheader("Whose power can wait")
-    st.caption("If the grid needs relief, ask homes to wait in this order: flexible loads first, "
-               "critical homes last. Batteries that need the dispatcher are left out.")
-    waiting = pd.DataFrame(rules.waiting_list(results.to_dict("records")))
-    waiting = waiting.merge(current[["battery_id", "home_usage_kw"]], on="battery_id")
+                def reset_approvals():
+                    st.session_state.approved = set()
 
-    # How much power each group could free up
-    SHORT_LABEL = {1: "1 · Waits first", 2: "2 · Waits if needed", 3: "3 · Waits late", 4: "4 · Protect last"}
-    groups = waiting.groupby("wait_order", as_index=False).agg(
-        homes=("battery_id", "count"), total_kw=("home_usage_kw", "sum"))
-    cols = st.columns(len(groups))
-    for col, (_, g) in zip(cols, groups.iterrows()):
-        col.metric(f"{SHORT_LABEL[g['wait_order']]} ({int(g['homes'])} homes)", f"{g['total_kw']:.0f} kW")
 
-    waiting["category"] = waiting["category"].map(ICONS)
-    st.dataframe(
-        waiting[["wait_label", "battery_id", "household_type", "zone", "home_usage_kw", "category"]].rename(columns={
-            "wait_label": "Wait order",
-            "battery_id": "Battery",
-            "household_type": "Household",
-            "zone": "Zone",
-            "home_usage_kw": "Home uses kW",
+                # Every zone at a glance: a colored square, the name and how full it is
+                ZONE_DOT = {"Strained": "#dc3232", "Busy": "#f5a91e", "OK": "#94a3b8"}
+                zone_now = current.groupby("zone", sort=False)[["zone_stress", "zone_load_kw", "zone_capacity_kw"]].first()
+                lines = []
+                for zone, z in zone_now.sort_values("zone_stress", ascending=False).iterrows():
+                    state = ("Strained" if z["zone_stress"] >= rules.STRAINED_GRID
+                             else "Busy" if z["zone_stress"] >= rules.BUSY_GRID else "OK")
+                    lines.append(f'<div><span style="display:inline-block;width:12px;height:12px;border-radius:2px;'
+                                 f'background:{ZONE_DOT[state]};margin-right:8px"></span><b>{zone}</b>: '
+                                 f'{z["zone_stress"]:.0f}% <span style="opacity:.65">({state.lower()}, '
+                                 f'{z["zone_load_kw"]:.0f} of {z["zone_capacity_kw"]:.0f} kW)</span></div>')
+                st.html('<div style="font-size:15px;line-height:1.9;margin-bottom:6px">' + "".join(lines) + "</div>")
+
+                plans = rules.relief_plans(readings, now)
+
+                if not plans:
+                    st.success("No zone is strained. No relief steps needed.")
+                else:
+                    st.warning(
+                        f"**{rules.plural(len(plans), 'zone')} strained.** Gentlest step first; medical homes "
+                        f"and critical buildings are protected last. **Nothing happens until you click Approve.**"
+                    )
+
+                for i, plan in enumerate(plans):
+                    zone = plan["zone"]
+                    approved_kw = sum(s["kw"] for s in plan["steps"] if (now, zone, s["number"]) in st.session_state.approved)
+                    label = f"🔥 {zone}: {plan['stress']:.0f}%, needs {plan['needed_kw']:.0f} kW"
+                    with st.expander(label, expanded=(i == 0)):
+                        st.markdown(f"Approved so far: **{approved_kw:.0f} of {plan['needed_kw']:.0f} kW** → zone "
+                                    f"≈**{rules.stress_after(plan['load_kw'], plan['capacity_kw'], approved_kw):.0f}%**")
+
+                        # A step can only be approved once every earlier step that's needed has been approved.
+                        # That's what stops anyone jumping straight to cutting power.
+                        earlier_done = True
+                        for s in plan["steps"]:
+                            key = (now, zone, s["number"])
+                            done = key in st.session_state.approved
+
+                            if s["kw"] <= 0:
+                                # Nothing to do: one small grey line, no card
+                                st.caption(f"{s['number']}. {s['title']}: nothing to do "
+                                           f"({s['nothing_to_do'].rstrip('.')})")
+                                continue                          # skipped steps don't block later ones
+                            with st.container(border=True):
+                                st.markdown(f"**{s['number']}. {s['title']}** · frees **{s['kw']:.0f} kW** "
+                                            f"→ zone ≈{s['stress_after']:.0f}%")
+                                st.caption(f"{s['action']} {s['impact']}")
+                                with st.expander(f"Which {len(s['targets'])}"):
+                                    st.write(", ".join(s["targets"]))
+
+                                if done:
+                                    st.success("Approved. Command sent (simulated).", icon="✅")
+                                elif not s["needed"]:
+                                    st.caption("Not needed: the steps above already free enough.")
+                                elif not earlier_done:
+                                    st.button("Approve", key=f"approve_{now}_{zone}_{s['number']}", disabled=True,
+                                              help="Approve the earlier steps first.")
+                                else:
+                                    confirmed = True
+                                    if s["number"] >= 4:
+                                        # Cutting power or using emergency backup: ask for an extra confirmation
+                                        what = ("these homes will lose power" if s["number"] < 6
+                                                else "these buildings will use up their emergency backup")
+                                        confirmed = st.checkbox(f"I understand {what}.", key=f"confirm_{now}_{zone}_{s['number']}")
+                                    st.button("Approve", key=f"approve_{now}_{zone}_{s['number']}", type="primary",
+                                              on_click=approve, args=(key,), disabled=not confirmed)
+
+                            if s["needed"] and not done:
+                                earlier_done = False
+
+                        if plan["shortfall_kw"] > 0:
+                            st.error(f"Even with every step, {zone} is still about {plan['shortfall_kw']:.0f} kW short. "
+                                     f"Medical homes are never cut: escalate to the utility.")
+
+                if plans:
+                    st.button("Reset approvals", on_click=reset_approvals)
+
+
+    # --- Everything else, folded away so the main view stays clean ---
+    with st.expander("More details: charge over the day, every battery, whose power can wait"):
+        # --- Chart: fleet charge over the day ---
+        st.subheader("Average fleet charge over the day")
+        over_time = data.groupby("time", as_index=False)["charge_pct"].mean()
+        over_time["clock"] = over_time["time"].str[11:]   # "16:30" instead of the full date
+        chart = alt.Chart(over_time).mark_line().encode(
+            x=alt.X("clock", title="Time", axis=alt.Axis(values=[t for t in over_time["clock"] if t.endswith(":00")])),
+            y=alt.Y("charge_pct", title="Average charge (%)", scale=alt.Scale(domain=[0, 100])),
+            tooltip=["clock", alt.Tooltip("charge_pct", format=".0f", title="Charge %")],
+        )
+        # A dot showing the time picked on the slider
+        marker = alt.Chart(over_time[over_time["time"] == now]).mark_point(size=120, filled=True, color="red").encode(
+            x="clock", y="charge_pct",
+        )
+        st.altair_chart(chart + marker, width="stretch")
+        st.caption("Batteries fill up on cheap midday solar, then drain during the 2–8 pm heat wave.")
+
+        # --- Table: every battery right now, most urgent first ---
+        st.subheader(f"All batteries at {now[11:]}")
+        table = current.merge(results[["battery_id", "category", "reason", "silent_guess", "wait_order"]], on="battery_id")
+        table["severity"] = table["category"].map(SEVERITY)
+        table = table.sort_values(["severity", "battery_id"])
+        table["category"] = table["category"].map(ICONS)
+        table["battery_status"] = table["battery_status"].fillna("no signal")
+        table["silent_guess"] = table["silent_guess"].fillna("")
+        table = table[[
+            "category", "battery_id", "reason", "silent_guess", "household_type", "priority", "zone",
+            "battery_status", "charge_pct", "battery_kw", "inverter_temp_c", "home_usage_kw", "from_grid_kw",
+        ]].rename(columns={
             "category": "Category",
-        }),
-        hide_index=True, width="stretch", height=400,
-    )
+            "battery_id": "Battery",
+            "reason": "Why",
+            "silent_guess": "Silent: best guess",
+            "household_type": "Household",
+            "priority": "Priority",
+            "zone": "Zone",
+            "battery_status": "Status",
+            "charge_pct": "Charge %",
+            "battery_kw": "Battery kW",
+            "inverter_temp_c": "Temp °C",
+            "home_usage_kw": "Home uses kW",
+            "from_grid_kw": "From grid kW",
+        })
+        st.dataframe(
+            table, hide_index=True, width="stretch", height=600,
+            column_config={"Why": st.column_config.TextColumn(width="large")},
+        )
+
+        # --- Waiting list: whose power can wait, in order ---
+        st.subheader("Whose power can wait")
+        st.caption("If the grid needs relief, ask homes to wait in this order: flexible loads first, "
+                   "critical homes last. Batteries that need the dispatcher are left out.")
+        waiting = pd.DataFrame(rules.waiting_list(results.to_dict("records")))
+        waiting = waiting.merge(current[["battery_id", "home_usage_kw"]], on="battery_id")
+
+        # How much power each group could free up
+        SHORT_LABEL = {1: "1 · Waits first", 2: "2 · Waits if needed", 3: "3 · Waits late", 4: "4 · Protect last"}
+        groups = waiting.groupby("wait_order", as_index=False).agg(
+            homes=("battery_id", "count"), total_kw=("home_usage_kw", "sum"))
+        cols = st.columns(len(groups))
+        for col, (_, g) in zip(cols, groups.iterrows()):
+            col.metric(f"{SHORT_LABEL[g['wait_order']]} ({int(g['homes'])} homes)", f"{g['total_kw']:.0f} kW")
+
+        waiting["category"] = waiting["category"].map(ICONS)
+        st.dataframe(
+            waiting[["wait_label", "battery_id", "household_type", "zone", "home_usage_kw", "category"]].rename(columns={
+                "wait_label": "Wait order",
+                "battery_id": "Battery",
+                "household_type": "Household",
+                "zone": "Zone",
+                "home_usage_kw": "Home uses kW",
+                "category": "Category",
+            }),
+            hide_index=True, width="stretch", height=400,
+        )
+
 
 # ===========================================================================
 # Tab 2: how the fleet earns money on a normal day (no heat wave, no problems)

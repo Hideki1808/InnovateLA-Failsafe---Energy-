@@ -536,15 +536,15 @@ def summary(readings, at_time, results, approved_steps=()):
         todo = [s for s in plan["steps"] if s["needed"] and (z, s["number"]) not in approved_steps]
         if todo:
             s = todo[0]
-            text = f"in {z}, approve step {s['number']}: {s['title'].lower()} (frees about {s['kw']:.0f} kW)"
+            text = f"{z}: approve step {s['number']}, {s['title'].lower()} ({s['kw']:.0f} kW)"
             cuts_needed = any(st["needed"] for st in plan["steps"][3:5])
             if s["number"] < 4:
-                text += "; homes may still need cutting after that" if cuts_needed else "; nobody needs to lose power"
+                text += "; cuts may follow" if cuts_needed else "; nobody loses power"
             actions.append(text)
         elif plan["shortfall_kw"] > 0:
-            actions.append(f"in {z}, all steps approved but still {plan['shortfall_kw']:.0f} kW short; escalate to the utility")
+            actions.append(f"{z}: all steps approved, still {plan['shortfall_kw']:.0f} kW short; call the utility")
         else:
-            actions.append(f"in {z}, relief steps approved; keep an eye on it")
+            actions.append(f"{z}: relief approved; keep watching")
     if not strained and coming:
         z, t = min(coming.items(), key=lambda kv: kv[1])
         actions.append(f"let batteries in {z} finish charging before {clock(t)} so they're full when the strain hits")
@@ -556,6 +556,11 @@ def summary(readings, at_time, results, approved_steps=()):
                        f"({', '.join(r['battery_id'] for r in low)})")
     if len(singles) > 2:
         actions.append(f"then the other {len(singles) - 2} on the alerts list")
+
+    # Keep it short enough to read at a glance: the top 3, and point to the rest
+    if len(actions) > 3:
+        extra = len(actions) - 3
+        actions = actions[:3] + [f"{extra} more item{'s' if extra > 1 else ''} in the Alerts and Response ladder tabs"]
 
     if actions:
         action = "**Recommended:** " + " ".join(f"{n}) {a[0].upper() + a[1:]}." for n, a in enumerate(actions, 1))
