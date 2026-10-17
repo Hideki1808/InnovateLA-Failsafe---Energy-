@@ -91,7 +91,7 @@ with live_tab:
     # going silent, or the grid becoming strained. Announce each once.
     events = []
     for _, r in results.iterrows():
-        who = f"{r['battery_id']} ({r['home_type'].replace('_', ' ')} home)"
+        who = f"{r['battery_id']} ({r['household_type'].replace('_', ' ')} home)"
         if r["category"] == rules.NEEDS_DISPATCHER:
             why = (f"silent, probably {r['silent_guess']}" if pd.notna(r["silent_guess"])
                    else r["reason"].split(".")[0].lower())
@@ -169,7 +169,7 @@ with live_tab:
         with st.container(height=380):
             for _, a in alerts.iterrows():
                 guess = f" · silent: **{a['silent_guess']}**" if pd.notna(a["silent_guess"]) else ""
-                text = (f"**{a['battery_id']}** · {a['home_type']} · {a['neighborhood']}{guess}  \n"
+                text = (f"**{a['battery_id']}** · {a['household_type']} · {a['neighborhood']}{guess}  \n"
                         f"{a['reason']}")
                 if a["category"] == rules.NEEDS_DISPATCHER:
                     st.error(text, icon="🔴")
@@ -279,14 +279,14 @@ with live_tab:
     table["battery_status"] = table["battery_status"].fillna("no signal")
     table["silent_guess"] = table["silent_guess"].fillna("")
     table = table[[
-        "category", "battery_id", "reason", "silent_guess", "home_type", "priority", "neighborhood",
+        "category", "battery_id", "reason", "silent_guess", "household_type", "priority", "neighborhood",
         "battery_status", "charge_pct", "battery_kw", "inverter_temp_c", "home_usage_kw", "from_grid_kw",
     ]].rename(columns={
         "category": "Category",
         "battery_id": "Battery",
         "reason": "Why",
         "silent_guess": "Silent: best guess",
-        "home_type": "Home type",
+        "household_type": "Household",
         "priority": "Priority",
         "neighborhood": "Neighborhood",
         "battery_status": "Status",
@@ -318,10 +318,10 @@ with live_tab:
 
     waiting["category"] = waiting["category"].map(ICONS)
     st.dataframe(
-        waiting[["wait_label", "battery_id", "home_type", "neighborhood", "home_usage_kw", "category"]].rename(columns={
+        waiting[["wait_label", "battery_id", "household_type", "neighborhood", "home_usage_kw", "category"]].rename(columns={
             "wait_label": "Wait order",
             "battery_id": "Battery",
-            "home_type": "Home type",
+            "household_type": "Household",
             "neighborhood": "Neighborhood",
             "home_usage_kw": "Home uses kW",
             "category": "Category",

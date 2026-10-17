@@ -36,16 +36,42 @@ SEED = 42  # same seed = same fake data every run (handy for demos)
 BATTERY_CAPACITY_KWH = 20.0
 BATTERY_MAX_KW = 10.0
 
-NEIGHBORHOODS = ["San Pedro", "Wilmington", "Harbor City", "Long Beach West"]
+# ---------------------------------------------------------------------------
+# Where things are: a small residential part of Wilmington, near the LA harbor
+# ---------------------------------------------------------------------------
+# Each neighborhood is a shape on the map, given by its corners as (latitude, longitude).
+# The shapes sit over streets and houses only, so random points inside them land on
+# dry land. WATER marks the places nearby that are NOT land, as a second safety check.
+NEIGHBORHOODS = {
+    "Banning Park":     [(33.7920, -118.2620), (33.7920, -118.2520), (33.7860, -118.2520), (33.7860, -118.2620)],
+    "Avalon":           [(33.7860, -118.2670), (33.7860, -118.2570), (33.7805, -118.2570), (33.7805, -118.2670)],
+    "West Wilmington":  [(33.7920, -118.2740), (33.7920, -118.2650), (33.7845, -118.2650), (33.7845, -118.2740)],
+    "North Wilmington": [(33.7965, -118.2700), (33.7965, -118.2570), (33.7925, -118.2570), (33.7925, -118.2700)],
+}
+WATER = {
+    "Harbor (Slip 5 / East Basin)": [(33.7720, -118.2900), (33.7720, -118.2200), (33.7400, -118.2200), (33.7400, -118.2900)],
+    "Machado Lake":                 [(33.7920, -118.2980), (33.7920, -118.2860), (33.7780, -118.2860), (33.7780, -118.2980)],
+}
 
-# What each home has on the line. This is how the dispatcher knows "whose power can wait".
-#   (type, description, priority, how common)
-HOME_TYPES = [
-    ("medical", "Medical equipment at home (oxygen, dialysis)", "critical", 1),
-    ("cold_storage", "Small cold storage / pharmacy fridge", "critical", 1),
-    ("telecom", "Hosts a cell-phone relay", "critical", 1),
-    ("family", "Regular household", "normal", 6),
-    ("flexible", "Has EV charger and pool pump (can wait)", "flexible", 3),
+# Household types. This is how the dispatcher knows "whose power can wait".
+#   type: (description, priority, how common)
+HOUSEHOLD_TYPES = {
+    "regular":    ("Regular household", "normal", 7),
+    "vulnerable": ("Elderly or heat-vulnerable residents", "critical", 2),
+    "medical":    ("Medical equipment at home (oxygen, dialysis)", "critical", 1),
+}
+# Share of regular homes with an EV charger and pool pump. That load can wait,
+# so these homes are first in line when the grid needs relief.
+FLEXIBLE_SHARE = 0.4
+
+# Critical buildings: always protected, never shed. Names are made up for the demo.
+CRITICAL_BUILDINGS = [
+    {"building_id": "HOSP-1", "name": "Harbor Community Hospital", "building_type": "hospital",
+     "lat": 33.7890, "lon": -118.2560, "load_kw": 150, "backup": "Diesel generator, 24 hours"},
+    {"building_id": "FIRE-1", "name": "Wilmington Fire Station", "building_type": "fire_station",
+     "lat": 33.7830, "lon": -118.2625, "load_kw": 15, "backup": "Battery, 8 hours"},
+    {"building_id": "COLD-1", "name": "Harbor Cold Storage", "building_type": "cold_storage",
+     "lat": 33.7880, "lon": -118.2700, "load_kw": 40, "backup": "None"},
 ]
 
 # Planted problems
@@ -65,36 +91,101 @@ HEAT_WAVE_END_HOUR = 20    # 8 pm
 # ---------------------------------------------------------------------------
 # The fleet (who is in it)
 # ---------------------------------------------------------------------------
+def inside(lat, lon, shape):
+    """True if the point is inside the shape. (The classic "ray casting" test: draw a
+    line from the point and count how many edges it crosses; odd means inside.)"""
+    hits = False
+    j = len(shape) - 1
+    for i in range(len(shape)):
+        (lat_i, lon_i), (lat_j, lon_j) = shape[i], shape[j]
+        if (lat_i > lat) != (lat_j > lat) and \
+                lon < (lon_j - lon_i) * (lat - lat_i) / (lat_j - lat_i) + lon_i:
+            hits = not hits
+        j = i
+    return hits
+
+
+def on_land(lat, lon):
+    """Inside one of our neighborhoods, and not in any known water."""
+    in_area = any(inside(lat, lon, shape) for shape in NEIGHBORHOODS.values())
+    in_water = any(inside(lat, lon, shape) for shape in WATER.values())
+    return in_area and not in_water
+
+
+def random_point(rng, shape):
+    """A random spot inside a neighborhood shape that's on land."""
+    lats = [p[0] for p in shape]
+    lons = [p[1] for p in shape]
+    while True:   # keep trying until a point lands inside (almost always first try)
+        lat = rng.uniform(min(lats), max(lats))
+        lon = rng.uniform(min(lons), max(lons))
+        if inside(lat, lon, shape) and on_land(lat, lon):
+            return round(lat, 5), round(lon, 5)
+
+
 def make_fleet(rng):
     """Create the list of homes. Each home has one battery."""
-    types = [t for t in HOME_TYPES for _ in range(t[3])]
+    # Exact shares (not random picks), so the fleet mix is the same every time:
+    # with 40 homes that's about 28 regular, 8 vulnerable, 4 medical (the planted
+    # problems below can swap one or two).
+    total_weight = sum(weight for _, _, weight in HOUSEHOLD_TYPES.values())
+    types = []
+    for t, (_, _, weight) in HOUSEHOLD_TYPES.items():
+        types += [t] * round(FLEET_SIZE * weight / total_weight)
+    types = (types + ["regular"] * FLEET_SIZE)[:FLEET_SIZE]   # top up / trim after rounding
+    rng.shuffle(types)
+    flexible_left = round(types.count("regular") * FLEXIBLE_SHARE)
+
     fleet = []
     for i in range(1, FLEET_SIZE + 1):
-        home_type, description, priority, _ = rng.choice(types)
-        fleet.append({
+        household_type = types[i - 1]
+        has_flexible_load = household_type == "regular" and flexible_left > 0
+        flexible_left -= has_flexible_load
+        neighborhood = rng.choice(list(NEIGHBORHOODS))
+        lat, lon = random_point(rng, NEIGHBORHOODS[neighborhood])
+        home = {
             "battery_id": f"BAT-{i:03d}",
             "home_id": f"HOME-{i:03d}",
-            "neighborhood": rng.choice(NEIGHBORHOODS),
-            "home_type": home_type,
-            "description": description,
-            "priority": priority,
+            "neighborhood": neighborhood,
+            "lat": lat,
+            "lon": lon,
+            "household_type": household_type,
+            "has_flexible_load": has_flexible_load,
             "start_charge_pct": rng.uniform(40, 80),
-        })
+        }
+        _describe(home)
+        fleet.append(home)
 
     # Make sure the planted problems land on homes that make a good story:
-    # the tripped battery is at a critical home, so the dispatcher really cares.
+    # the tripped battery is at a medical home and the broken one at a vulnerable home,
+    # so the dispatcher really cares.
     _set_type(fleet, TRIPPED_BATTERY, "medical")
-    _set_type(fleet, SILENT_BATTERY, "family")
-    _set_type(fleet, BROKEN_BATTERY, "cold_storage")
+    _set_type(fleet, SILENT_BATTERY, "regular")
+    _set_type(fleet, BROKEN_BATTERY, "vulnerable")
     return fleet
 
 
-def _set_type(fleet, battery_id, home_type):
+def _describe(home):
+    """Fill in the description and priority from the household type."""
+    description, priority, _ = HOUSEHOLD_TYPES[home["household_type"]]
+    if home["has_flexible_load"]:
+        description, priority = "Regular household with EV charger and pool pump", "flexible"
+    home["description"], home["priority"] = description, priority
+
+
+def _set_type(fleet, battery_id, household_type):
     for home in fleet:
         if home["battery_id"] == battery_id:
-            for t in HOME_TYPES:
-                if t[0] == home_type:
-                    home["home_type"], home["description"], home["priority"] = t[0], t[1], t[2]
+            home["household_type"] = household_type
+            home["has_flexible_load"] = False
+            _describe(home)
+
+
+def critical_buildings():
+    """The critical buildings (hospital, fire station, cold storage) with their locations."""
+    for b in CRITICAL_BUILDINGS:
+        assert on_land(b["lat"], b["lon"]), f"{b['name']} is not on land"
+    return [dict(b) for b in CRITICAL_BUILDINGS]
 
 
 # ---------------------------------------------------------------------------
@@ -149,15 +240,13 @@ def home_usage_kw(home, hour, rng):
     kw = 0.6                                  # fridge, lights, wifi
     if 6 <= hour < 9 or 17 <= hour < 22:
         kw += 1.5                             # people are home and busy
-    if home["home_type"] == "medical":
+    if home["household_type"] == "medical":
         kw += 0.8                             # equipment runs all day
-    if home["home_type"] == "cold_storage":
-        kw += 1.5
-    if home["home_type"] == "telecom":
-        kw += 1.0
-    if home["home_type"] == "flexible" and (hour >= 22 or hour < 5):
+    if home["household_type"] == "vulnerable":
+        kw += 0.4                             # someone home all day: fans, medicine fridge
+    if home["has_flexible_load"] and (hour >= 22 or hour < 5):
         kw += 7.0                             # EV charging overnight
-    if home["home_type"] == "flexible" and 12 <= hour < 18:
+    if home["has_flexible_load"] and 12 <= hour < 18:
         kw += 1.5                             # pool pump
     if is_heat_wave(hour):
         kw += rng.uniform(3.0, 5.0)           # air conditioning
@@ -166,9 +255,9 @@ def home_usage_kw(home, hour, rng):
 
 def flexible_usage_kw(home, hour):
     """The part of a home's usage that could wait an hour or two without hurting anyone.
-    Only "flexible" homes have it: EV charging, pool pump, and a smart thermostat
+    Only homes with flexible load have it: EV charging, pool pump, and a smart thermostat
     that can let the house warm up a degree or two during a heat wave."""
-    if home["home_type"] != "flexible":
+    if not home["has_flexible_load"]:
         return 0.0
     kw = 0.0
     if hour >= 22 or hour < 5:
@@ -299,7 +388,9 @@ def _run_day(seed, ordinary_day):
                 "battery_id": bid,
                 "home_id": home["home_id"],
                 "neighborhood": home["neighborhood"],
-                "home_type": home["home_type"],
+                "lat": home["lat"],
+                "lon": home["lon"],
+                "household_type": home["household_type"],
                 "description": home["description"],
                 "priority": home["priority"],
                 # From the battery (blank if it's silent)
@@ -366,7 +457,7 @@ if __name__ == "__main__":
         print(f"--- Snapshot at {t} ---")
         for r in snapshot(data, t):
             if r["battery_id"] in (SILENT_BATTERY, TRIPPED_BATTERY, BROKEN_BATTERY):
-                print(f"  {r['battery_id']} ({r['home_type']}): status={r['battery_status']}, "
+                print(f"  {r['battery_id']} ({r['household_type']}): status={r['battery_status']}, "
                       f"charge={r['charge_pct']}, temp={r['inverter_temp_c']}, "
                       f"usage={r['home_usage_kw']} kW, from grid={r['from_grid_kw']} kW")
         row = snapshot(data, t)[0]
@@ -375,4 +466,13 @@ if __name__ == "__main__":
 
     totals = earnings_by_battery(data)
     print(f"Whole fleet earned ${sum(totals.values()):.2f} today "
-          f"(avg ${sum(totals.values()) / len(totals):.2f} per battery)")
+          f"(avg ${sum(totals.values()) / len(totals):.2f} per battery)\n")
+
+    homes = snapshot(data, "2026-10-17 00:00")
+    print("Household types:", {t: sum(h["household_type"] == t for h in homes) for t in HOUSEHOLD_TYPES},
+          "| with EV + pool:", sum(h["priority"] == "flexible" for h in homes))
+    print("Neighborhoods:", {n: sum(h["neighborhood"] == n for h in homes) for n in NEIGHBORHOODS})
+    print("All homes on land:", all(on_land(h["lat"], h["lon"]) for h in homes))
+    print("\nCritical buildings:")
+    for b in critical_buildings():
+        print(f"  {b['name']} ({b['building_type']}) at {b['lat']}, {b['lon']}, {b['load_kw']} kW")

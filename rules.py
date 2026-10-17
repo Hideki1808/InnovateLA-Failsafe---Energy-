@@ -33,6 +33,8 @@ STRAINED_GRID = 80         # grid stress at or above this: the grid is close to 
 VOLTAGE_LOW, VOLTAGE_HIGH = 225, 255   # normal home voltage is about 240
 METER_TOLERANCE_KW = 0.3   # differences smaller than this are just noise
 FLEET_ACTIVE_KW = 1.0      # if healthy batteries average more than this, the fleet is "busy"
+NEARLY_FULL_PCT = 90       # a battery this full isn't expected to charge
+NEARLY_EMPTY_PCT = 25      # a battery this empty isn't expected to discharge
 LOOKBACK_STEPS = 8         # how far back to look for warning signs (8 x 15 min = 2 hours)
 
 
@@ -98,13 +100,19 @@ def guess_silent(row, history, fleet_kw_by_time):
     # fleet (or this battery) may just be resting, so "doing nothing" this minute proves little.
     worked = None       # latest moment the meter showed this battery moving power
     busy_idle = None    # latest moment the fleet was busy but this battery did nothing
+    # Its last reported charge tells us what it *should* have been able to do:
+    # a full battery won't charge and an empty one won't discharge, so neither is suspicious.
+    last_charge = last["charge_pct"] if last is not None else 50
     for r in reversed(history):
         if last is not None and r["time"] <= last["time"]:
             break                             # only look at the silent stretch
         kw = r["home_usage_kw"] - r["from_grid_kw"]
+        fleet_kw = fleet_kw_by_time[r["time"]]
+        should_be_busy = (fleet_kw > FLEET_ACTIVE_KW and last_charge > NEARLY_EMPTY_PCT) or \
+                         (fleet_kw < -FLEET_ACTIVE_KW and last_charge < NEARLY_FULL_PCT)
         if abs(kw) > METER_TOLERANCE_KW and worked is None:
             worked = (r, kw)
-        elif abs(fleet_kw_by_time[r["time"]]) > FLEET_ACTIVE_KW and busy_idle is None:
+        elif should_be_busy and busy_idle is None:
             busy_idle = r
 
     # Rule S3 - JUST NOT TALKING (earlier proof): at some point since it went quiet,
@@ -130,8 +138,8 @@ def guess_silent(row, history, fleet_kw_by_time):
     # Rule S5 - CAN'T TELL YET: the fleet hasn't been busy since it went quiet, so there's
     # been no moment to prove it's working or not. We'll know when batteries are next active.
     return "can't tell yet", (
-        f"Silent since {since}. The fleet is resting right now, so we can't tell "
-        f"if it's working. Check again when batteries are active."
+        f"Silent since {since}. Nothing it was expected to do since then would show "
+        f"whether it's working. Check again when batteries are active."
     )
 
 
@@ -225,7 +233,7 @@ def triage(readings, at_time):
         order, order_label = wait_order(row)
         results.append({
             "battery_id": row["battery_id"],
-            "home_type": row["home_type"],
+            "household_type": row["household_type"],
             "priority": row["priority"],
             "category": category,
             "reason": reason,
@@ -403,7 +411,7 @@ def plural(n, word):
 def problem_and_action(r):
     """For a battery that needs the dispatcher: (kind, short problem, what to do about it).
     kind is a number used to put the worst problems first: 0 tripped, 1 broken, 2 hot, 3 low backup."""
-    who = f"{r['battery_id']} ({r['home_type'].replace('_', ' ')} home)"
+    who = f"{r['battery_id']} ({r['household_type'].replace('_', ' ')} home)"
     # Tripped: the safety switch is off; check why before switching it back on
     if r["battery_status"] == "tripped" or r["silent_guess"] == "tripped":
         return 0, f"{r['battery_id']} tripped", f"check {who} is safe, then reset it remotely"
@@ -522,5 +530,5 @@ if __name__ == "__main__":
         for r in results:
             if r["category"] in (NEEDS_DISPATCHER, WATCH):
                 guess = f" [{r['silent_guess']}]" if r["silent_guess"] else ""
-                print(f"  {r['category']:<17} {r['battery_id']} ({r['home_type']}){guess}: {r['reason']}")
+                print(f"  {r['category']:<17} {r['battery_id']} ({r['household_type']}){guess}: {r['reason']}")
         print()
