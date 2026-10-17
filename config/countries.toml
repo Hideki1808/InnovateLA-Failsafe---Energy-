@@ -1,0 +1,227 @@
+# =============================================================================
+# Country settings: every country-specific number the simulator and dashboard use.
+#
+#   !!  ALL VALUES ARE APPROXIMATE  !!
+#   They are rough, believable figures picked for a hackathon demo, NOT
+#   measurements or official data. Prices, loads, capacities and temperatures
+#   are ballpark. Building names are made up. Check real tariffs and grid data
+#   before using any of this for a real decision.
+#
+# HOW TO ADD A COUNTRY
+#   Copy one whole [countries.<id>] block (everything down to the next
+#   [countries.<id>] line), paste it at the end, give it a new <id>, and change
+#   the values. That's all: it appears in the dashboard's country dropdown.
+#   No code changes needed.
+#
+# Coordinates are [latitude, longitude]. Zones are 4-corner shapes that tile one
+# section of the grid (no gaps, no overlaps) and must sit on land; homes are
+# placed at random inside them. "water" lists nearby lakes/rivers to avoid.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# United States: Austin, Texas (Windsor Park area, northeast Austin)
+# -----------------------------------------------------------------------------
+[countries.us_texas]
+name = "United States · Austin, Texas"
+region = "Windsor Park, Austin"
+approximate = true
+currency = "$"
+clock = "12h"                            # how times are written: 12h (2 PM) or 24h (14:00)
+
+nominal_voltage = 240.0                  # V, split-phase home supply
+voltage_tolerance_pct = 5                # normal band is ±5% (approx.)
+
+[countries.us_texas.map]
+center = [30.309, -97.688]
+zoom = 14.0
+
+[countries.us_texas.battery]             # one home battery (approx.)
+capacity_kwh = 20
+max_kw = 10
+
+[countries.us_texas.prices]              # $ per kWh (approx., time-of-use / dynamic plan)
+night = 0.11
+cheap_solar = 0.05                       # 10 am - 3 pm, lots of solar
+evening_peak = 0.25                      # 5 - 9 pm on a normal day
+heat_wave = 0.50                         # during a heat wave
+heat_wave_peak = 1.20                    # heat wave, 4 - 8 pm (wholesale spikes can go far higher)
+
+[countries.us_texas.temperature_c]       # outdoor temperature (approx.)
+night = 26                               # coolest part of a normal day
+daily_rise = 10                          # how much warmer it gets by mid-afternoon
+heat_wave_extra = 8                      # extra degrees during the heat wave
+
+[countries.us_texas.home_load_kw]        # per home (approx.)
+air_conditioning_heat_wave = [3.0, 5.0]  # extra AC load in a heat wave (random between these)
+ev_charger = 7.2                         # Level 2 charger, overnight
+
+[countries.us_texas.flexible_load]       # load that can wait an hour or two (approx.)
+name = "EV charger and pool pump"
+daytime_kw = 1.5                         # pool pump, noon - 6 pm
+thermostat_nudge_kw = 1.0                # AC a degree warmer during a heat wave
+
+[countries.us_texas.household_mix]       # how common each household type is (relative weights)
+regular = 7
+vulnerable = 2
+medical = 1
+flexible_share = 0.4                     # share of regular homes with flexible load
+
+[[countries.us_texas.zones]]
+name = "North Windsor Park"
+shape = [[30.3180, -97.7000], [30.3180, -97.6760], [30.3130, -97.6760], [30.3130, -97.7000]]
+capacity_kw = 560   # approx., set so the demo heat wave strains this zone at the right time
+other_customers_kw = 250                 # other homes and shops at their evening peak (approx.)
+
+[[countries.us_texas.zones]]
+name = "West Windsor Park"
+shape = [[30.3130, -97.7000], [30.3130, -97.6880], [30.3060, -97.6880], [30.3060, -97.7000]]
+capacity_kw = 480
+other_customers_kw = 250
+
+[[countries.us_texas.zones]]
+name = "East Windsor Park"
+shape = [[30.3130, -97.6880], [30.3130, -97.6760], [30.3060, -97.6760], [30.3060, -97.6880]]
+capacity_kw = 560
+other_customers_kw = 250
+
+[[countries.us_texas.zones]]
+name = "South Windsor Park"
+shape = [[30.3060, -97.7000], [30.3060, -97.6760], [30.3000, -97.6760], [30.3000, -97.7000]]
+capacity_kw = 520
+other_customers_kw = 250
+
+[[countries.us_texas.water]]             # Mueller Lake, just south-west of the region
+name = "Mueller Lake"
+shape = [[30.2990, -97.7080], [30.2990, -97.7020], [30.2940, -97.7020], [30.2940, -97.7080]]
+
+[[countries.us_texas.critical_buildings]]
+id = "HOSP-1"
+name = "Windsor Park Medical Center"     # made-up name
+type = "hospital"
+location = [30.3095, -97.6820]
+load_kw = 150                            # approx.
+backup = "Diesel generator"
+backup_hours = 24
+
+[[countries.us_texas.critical_buildings]]
+id = "FIRE-1"
+name = "Fire Station 17"                 # made-up name
+type = "fire_station"
+location = [30.3030, -97.6900]
+load_kw = 15
+backup = "Battery"
+backup_hours = 8
+
+[[countries.us_texas.critical_buildings]]
+id = "COLD-1"
+name = "Food Bank Cold Storage"          # made-up name
+type = "cold_storage"
+location = [30.3100, -97.6950]
+load_kw = 40
+backup = "None"
+backup_hours = 0
+
+
+# -----------------------------------------------------------------------------
+# Germany: Munich (Trudering, east Munich)
+# -----------------------------------------------------------------------------
+[countries.de_munich]
+name = "Germany · Munich"
+region = "Trudering, München"
+approximate = true
+currency = "€"
+clock = "24h"
+
+nominal_voltage = 230.0                  # V, single-phase home supply
+voltage_tolerance_pct = 10               # normal band is ±10% (approx.)
+
+[countries.de_munich.map]
+center = [48.120, 11.656]
+zoom = 13.75                             # a little further out: this area is wider
+
+[countries.de_munich.battery]             # smaller home batteries are typical (approx.)
+capacity_kwh = 10
+max_kw = 5
+
+[countries.de_munich.prices]              # € per kWh (approx., dynamic tariff incl. taxes and fees)
+night = 0.30
+cheap_solar = 0.18
+evening_peak = 0.42
+heat_wave = 0.50
+heat_wave_peak = 0.70
+
+[countries.de_munich.temperature_c]
+night = 16
+daily_rise = 9
+heat_wave_extra = 12
+
+[countries.de_munich.home_load_kw]
+air_conditioning_heat_wave = [0.3, 1.0]  # few homes have AC: mostly fans (approx.)
+ev_charger = 11.0                        # 11 kW wallbox
+
+[countries.de_munich.flexible_load]
+name = "EV wallbox and heat-pump water heater"
+daytime_kw = 1.0                         # heat-pump water heater, noon - 6 pm
+thermostat_nudge_kw = 0.3
+
+[countries.de_munich.household_mix]
+regular = 7
+vulnerable = 3                           # older population (approx.)
+medical = 1
+flexible_share = 0.3
+
+[[countries.de_munich.zones]]
+name = "Trudering Nord"
+shape = [[48.1280, 11.6400], [48.1280, 11.6720], [48.1230, 11.6720], [48.1230, 11.6400]]
+capacity_kw = 330   # approx., set so the demo heat wave strains this zone at the right time
+other_customers_kw = 150
+
+[[countries.de_munich.zones]]
+name = "Trudering West"
+shape = [[48.1230, 11.6400], [48.1230, 11.6560], [48.1170, 11.6560], [48.1170, 11.6400]]
+capacity_kw = 280
+other_customers_kw = 150
+
+[[countries.de_munich.zones]]
+name = "Trudering Ost"
+shape = [[48.1230, 11.6560], [48.1230, 11.6720], [48.1170, 11.6720], [48.1170, 11.6560]]
+capacity_kw = 390
+other_customers_kw = 150
+
+[[countries.de_munich.zones]]
+name = "Trudering Süd"
+shape = [[48.1170, 11.6400], [48.1170, 11.6720], [48.1120, 11.6720], [48.1120, 11.6400]]
+capacity_kw = 310
+other_customers_kw = 150
+
+[[countries.de_munich.water]]             # lake in the Ostpark, just west of the region
+name = "Ostpark lake"
+shape = [[48.1140, 11.6290], [48.1140, 11.6370], [48.1100, 11.6370], [48.1100, 11.6290]]
+
+[[countries.de_munich.critical_buildings]]
+id = "HOSP-1"
+name = "Klinik Trudering"                 # made-up name
+type = "hospital"
+location = [48.1200, 11.6640]
+load_kw = 120
+backup = "Diesel generator"
+backup_hours = 24
+
+[[countries.de_munich.critical_buildings]]
+id = "FIRE-1"
+name = "Feuerwache Trudering"             # made-up name
+type = "fire_station"
+location = [48.1145, 11.6520]
+load_kw = 12
+backup = "Battery"
+backup_hours = 8
+
+[[countries.de_munich.critical_buildings]]
+id = "COLD-1"
+name = "Kühlhaus Ost"                     # made-up name
+type = "cold_storage"
+location = [48.1195, 11.6460]
+load_kw = 30
+backup = "None"
+backup_hours = 0

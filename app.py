@@ -29,19 +29,19 @@ ICONS = {
 SEVERITY = {rules.NEEDS_DISPATCHER: 0, rules.WATCH: 1, rules.CAN_WAIT: 2, rules.NORMAL: 3}
 
 
-# Make the fake data once and remember it (so the page doesn't redo it on every click)
+# Make the fake data once per country and remember it (so the page doesn't redo it on
+# every click)
 @st.cache_data
-def load_readings():
+def load_readings(country_id):
+    simulator.use_country(country_id)
     return simulator.simulate()
 
 
 @st.cache_data
-def run_rules(at_time):
-    return pd.DataFrame(rules.triage(load_readings(), at_time))
+def run_rules(country_id, at_time):
+    simulator.use_country(country_id)
+    return pd.DataFrame(rules.triage(load_readings(country_id), at_time))
 
-
-readings = load_readings()
-data = pd.DataFrame(readings)
 
 # Page-wide style tweaks:
 #  - while the page redraws (every step of Play), Streamlit normally fades everything out
@@ -51,7 +51,28 @@ st.html("""<style>
   [data-stale='true'] { opacity: 1 !important; transition: none !important; }
   [data-testid='stMainBlockContainer'], .block-container { padding-top: 1.2rem !important; }
 </style>""")
-st.markdown("### ⚡ Home Battery Fleet · Wilmington dispatch")
+# --- Country: everything country-specific comes from config/countries.toml ---
+st.session_state.setdefault("country", simulator.DEFAULT_COUNTRY)
+
+
+def reset_demo():
+    """A different country starts the demo over: back to noon, nothing approved yet."""
+    for key in ("now", "playing", "pause_note", "seen", "approved", "next_time"):
+        st.session_state.pop(key, None)
+
+
+title_col, country_col = st.columns([3, 1.2], vertical_alignment="center")
+country_col.selectbox("Country", list(simulator.COUNTRIES), key="country", on_change=reset_demo,
+                      format_func=lambda c: simulator.COUNTRIES[c]["name"], label_visibility="collapsed")
+country_id = st.session_state.country
+simulator.use_country(country_id)          # rules.py and simulator.py now use this country
+COUNTRY = simulator.COUNTRY
+CUR = COUNTRY["currency"]                  # e.g. "$" or "€"
+title_col.markdown(f"### ⚡ Home Battery Fleet · {COUNTRY['region']}")
+country_col.caption("Simulated data. Country numbers are approximate.")
+
+readings = load_readings(country_id)
+data = pd.DataFrame(readings)
 
 live_tab, earn_tab = st.tabs(["⚡ Live dispatch", "💰 Normal day earnings"])
 
@@ -94,7 +115,7 @@ with live_tab:
 
     now = st.session_state.now
     current = data[data["time"] == now]
-    results = run_rules(now)
+    results = run_rules(country_id, now)
 
     # Spot new events: a battery that needs the dispatcher (or changes why), a battery
     # going silent, or the grid becoming strained. Announce each once.
@@ -233,26 +254,29 @@ with live_tab:
                 # Critical buildings: larger squares with their name beside them
             pdk.Layer("PolygonLayer", building_rows, get_polygon="square", get_fill_color=BUILDING_COLOR,
                       get_line_color=[255, 255, 255], line_width_min_pixels=2, pickable=True),
-            pdk.Layer("TextLayer", building_rows, get_position=["lon", "lat"], get_text="label", get_color=ink,
+            pdk.Layer("TextLayer", character_set="'auto'", data=building_rows, get_position=["lon", "lat"], get_text="label", get_color=ink,
                       get_size=14, font_weight=600, get_text_anchor="'start'", get_pixel_offset=[14, 0]),
             # Homes: rings first (thick purple for medical, orange for vulnerable), then the dot on top
             dots(medical_rows, 60, 11, 16, "ring"),
             dots(vulnerable_rows, 48, 9, 13, "ring"),
             dots(home_rows, 32, 6, 9, "color", pickable=True),
             # Zone names last, on a white tag, so no dot ever covers them
-            pdk.Layer("TextLayer", zone_rows, get_position=["lon", "lat"], get_text="label",
+            pdk.Layer("TextLayer", character_set="'auto'", data=zone_rows, get_position=["lon", "lat"], get_text="label",
                       get_color=ink, get_size=16, font_weight=700, get_text_anchor="'start'",
                       get_alignment_baseline="'top'", get_pixel_offset=[6, 6],
                       background=True, get_background_color=[255, 255, 255, 220], background_padding=[4, 2]),
         ]
         st.pydeck_chart(pdk.Deck(
             layers=layers,
-            initial_view_state=pdk.ViewState(latitude=33.7885, longitude=-118.2630, zoom=14.15),
+            initial_view_state=pdk.ViewState(latitude=COUNTRY["map"]["center"][0],
+                                             longitude=COUNTRY["map"]["center"][1],
+                                             zoom=COUNTRY["map"]["zoom"]),
             map_style="dark" if dark else "light",
             # Hover box: the formatting lives here; each row just supplies plain title/line1/line2
             tooltip={"html": "<b>{title}</b><br/>{line1}<br/>{line2}",
                      "style": {"maxWidth": "340px", "fontSize": "15px"}},
-        ), height=560, key="fleet_map")   # same key every time = update the map in place, keep your zoom
+        ), height=560, key="fleet_map")   # same key every time = update the map in place (also when
+        #                                   switching country: it then moves to the new view, centred)
 
         # Legend: what every color and shape means
         def swatch(fill, ring=None, ring_px=0, square=False):
@@ -501,17 +525,30 @@ MONEY_COLOR = "#7c6ee0"       # violet: the running total
 
 
 @st.cache_data
-def load_ordinary_day():
+def load_ordinary_day(country_id):
+    simulator.use_country(country_id)
     return pd.DataFrame(simulator.simulate(ordinary_day=True))
 
 
 @st.cache_data
-def demo_day_earnings():
-    return sum(r["earnings_usd"] for r in load_readings())
+def demo_day_earnings(country_id):
+    return sum(r["earnings"] for r in load_readings(country_id))
+
+
+def money(amount, decimals=2):
+    """1234.5 -> '$1,234.50' or '€1,234.50', in the country's currency."""
+    return f"{CUR}{amount:,.{decimals}f}"
+
+
+def in_text(s):
+    """Streamlit text treats two $ signs as a math formula; escape them so they print."""
+    return s.replace("$", "\\$")
 
 
 with earn_tab:
-    calm = load_ordinary_day()
+    simulator.use_country(country_id)
+    calm = load_ordinary_day(country_id)
+    prices = COUNTRY["prices"]
     st.markdown(
         "On a normal day there's no emergency. Each battery earns its keep the simple way: "
         "**buy power when it's cheap** (midday, when solar floods the grid) and "
@@ -522,7 +559,7 @@ with earn_tab:
     day = calm.groupby("time", as_index=False).agg(
         price=("price_per_kwh", "first"),
         fleet_kw=("battery_kw", "sum"),
-        money=("earnings_usd", "sum"),
+        money=("earnings", "sum"),
     )
     day["clock"] = day["time"].str[11:]
     day["running_total"] = day["money"].cumsum()
@@ -536,9 +573,9 @@ with earn_tab:
     per_day = day["money"].sum()
     shifted_kwh = (calm["battery_kw"].clip(lower=0) * simulator.STEP_MINUTES / 60).sum()
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Fleet earns per day", f"${per_day:,.0f}")
-    c2.metric("Per battery per day", f"${per_day / batteries:.2f}")
-    c3.metric("Per battery per year", f"${per_day / batteries * 365:,.0f}",
+    c1.metric("Fleet earns per day", money(per_day, 0))
+    c2.metric("Per battery per day", money(per_day / batteries))
+    c3.metric("Per battery per year", money(per_day / batteries * 365, 0),
               help="Just the daily number × 365. Real years have cloudy days and holidays.")
     c4.metric("Energy moved to the evening", f"{shifted_kwh:,.0f} kWh")
 
@@ -546,12 +583,15 @@ with earn_tab:
     st.subheader("1. The price of power changes through the day")
     price_line = alt.Chart(day).mark_line(interpolate="step-after", strokeWidth=2, color=PRICE_COLOR).encode(
         x=x,
-        y=alt.Y("price", title="$ per kWh", axis=alt.Axis(format="$.2f")),
-        tooltip=[alt.Tooltip("clock", title="Time"), alt.Tooltip("price", title="Price", format="$.2f")],
+        y=alt.Y("price", title=f"{CUR} per kWh",
+                axis=alt.Axis(labelExpr=f"'{CUR}' + format(datum.value, '.2f')")),
+        tooltip=[alt.Tooltip("clock", title="Time"),
+                 alt.Tooltip("price", title=f"Price ({CUR}/kWh)", format=".2f")],
     )
     labels = pd.DataFrame([
-        {"clock": "12:30", "price": 0.08, "text": "Cheap: $0.08 (solar)"},
-        {"clock": "19:00", "price": 0.35, "text": "Peak: $0.35"},
+        {"clock": "12:30", "price": prices["cheap_solar"],
+         "text": f"Cheap: {money(prices['cheap_solar'])} (solar)"},
+        {"clock": "19:00", "price": prices["evening_peak"], "text": f"Peak: {money(prices['evening_peak'])}"},
     ])
     price_labels = alt.Chart(labels).mark_text(dy=-12, fontSize=13, color=PRICE_COLOR).encode(x="clock", y="price", text="text")
     st.altair_chart((price_line + price_labels).properties(height=200), width="stretch")
@@ -578,9 +618,10 @@ with earn_tab:
     st.subheader("3. Small cost at midday, bigger savings in the evening")
     money_line = alt.Chart(day).mark_line(strokeWidth=2, color=MONEY_COLOR).encode(
         x=x,
-        y=alt.Y("running_total", title="Fleet total so far", axis=alt.Axis(format="$,.0f")),
+        y=alt.Y("running_total", title=f"Fleet total so far ({CUR})",
+                axis=alt.Axis(labelExpr=f"'{CUR}' + format(datum.value, ',.0f')")),
         tooltip=[alt.Tooltip("clock", title="Time"),
-                 alt.Tooltip("running_total", title="Total so far", format="$,.2f")],
+                 alt.Tooltip("running_total", title=f"Total so far ({CUR})", format=",.2f")],
     )
     st.altair_chart(money_line.properties(height=200), width="stretch")
 
@@ -593,20 +634,22 @@ with earn_tab:
     used_kwh = (used["battery_kw"] * hours_per_step).sum()
     math = pd.DataFrame([
         {"When": "10 am – 3 pm", "Batteries": "Charge", "Energy": f"{bought_kwh:,.0f} kWh",
-         "Price": f"${-bought['earnings_usd'].sum() / bought_kwh:.2f} / kWh",
-         "Money": f"−${-bought['earnings_usd'].sum():,.2f}"},
+         "Price": f"{money(-bought['earnings'].sum() / bought_kwh)} / kWh",
+         "Money": f"−{money(-bought['earnings'].sum())}"},
         {"When": "5 pm – 9 pm", "Batteries": "Discharge", "Energy": f"{used_kwh:,.0f} kWh",
-         "Price": f"${used['earnings_usd'].sum() / used_kwh:.2f} / kWh",
-         "Money": f"+${used['earnings_usd'].sum():,.2f}"},
+         "Price": f"{money(used['earnings'].sum() / used_kwh)} / kWh",
+         "Money": f"+{money(used['earnings'].sum())}"},
         {"When": "Whole day", "Batteries": "", "Energy": "", "Price": "",
-         "Money": f"+${per_day:,.2f}"},
+         "Money": f"+{money(per_day)}"},
     ])
     st.dataframe(math, hide_index=True, width="stretch")
     st.caption(
         f"Simulated numbers, kept simple: {batteries} batteries of {simulator.BATTERY_CAPACITY_KWH:.0f} kWh, "
         f"no energy lost when charging, and each battery ends the day about where it started. "
         f"For comparison, on the heat-wave demo day the same fleet earned "
-        f"\\${demo_day_earnings():,.0f}, because peak prices hit \\$0.90 / kWh."   # \$ = a plain dollar sign
+        + in_text(f"{money(demo_day_earnings(country_id), 0)}, because peak prices hit "
+                  f"{money(prices['heat_wave_peak'])} / kWh.")
+        + " All prices are approximate (see config/countries.toml)."
     )
 
 # --- Playback loop: wait, then move to the next 15 minutes and redraw ---

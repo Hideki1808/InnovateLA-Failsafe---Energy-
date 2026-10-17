@@ -30,7 +30,7 @@ HOT_C = 60                 # inverter hotter than this is a warning sign
 LOW_CHARGE_PCT = 20        # below this, a critical home's backup is running thin
 BUSY_GRID = 70             # zone stress at or above this: flexible homes should wait
 STRAINED_GRID = 80         # zone stress at or above this: the zone is close to shedding load
-VOLTAGE_LOW, VOLTAGE_HIGH = 225, 255   # normal home voltage is about 240
+# (The normal voltage band depends on the country: see voltage_band() below.)
 METER_TOLERANCE_KW = 0.3   # differences smaller than this are just noise
 FLEET_ACTIVE_KW = 1.0      # if healthy batteries average more than this, the fleet is "busy"
 NEARLY_FULL_PCT = 90       # a battery this full isn't expected to charge
@@ -45,7 +45,7 @@ LOOKBACK_STEPS = 8         # how far back to look for warning signs (8 x 15 min 
 # (hospital, fire station, cold storage) aren't homes, but they're protected last too:
 # see the relief plan below.
 WAIT_LABEL = {
-    1: "1 - Can wait first (EV charger, pool pump)",
+    1: "1 - Can wait first (flexible load: EV and similar)",
     2: "2 - Can wait if needed (regular household)",
     3: "3 - Wait late (elderly / heat-vulnerable)",
     4: "4 - Protect last (medical equipment)",
@@ -92,7 +92,7 @@ def guess_silent(row, history, fleet_kw_by_time):
     # it was running hot or the meter saw a voltage spike. Those are what trip a battery.
     recent = history[-LOOKBACK_STEPS:]
     was_hot = last is not None and last["battery_status"] in ("warning_hot", "tripped")
-    spike = any(r["voltage"] > VOLTAGE_HIGH for r in recent)
+    spike = any(r["voltage"] > voltage_band()[1] for r in recent)
     if was_hot or spike:
         sign = "it was running hot" if was_hot else "the meter saw a voltage spike"
         return "tripped", (
@@ -193,15 +193,17 @@ def classify(row, history, fleet_kw_by_time):
         return WATCH, reason, None
 
     # Rule 5 - Odd VOLTAGE at the home. Not an emergency, but often comes before trouble.
-    if not VOLTAGE_LOW <= row["voltage"] <= VOLTAGE_HIGH:
-        return WATCH, f"Home voltage is {row['voltage']:.0f} V (normal is about 240 V).", None
+    low, high = voltage_band()
+    if not low <= row["voltage"] <= high:
+        return WATCH, (f"Home voltage is {row['voltage']:.0f} V "
+                       f"(normal is about {simulator.COUNTRY['nominal_voltage']:.0f} V)."), None
 
     # Rule 6 - CAN WAIT: healthy battery, flexible home, busy zone. This home's extra
-    # load (EV charging, pool pump) can be paused before anyone talks about shedding.
+    # load (EV charging and the like) can be paused before anyone talks about shedding.
     if row["priority"] == "flexible" and stress >= BUSY_GRID:
         return CAN_WAIT, (
-            f"{row['zone']} is busy ({stress:.0f}% of capacity). This home's EV charger and "
-            f"pool pump can be paused. First in line to wait."
+            f"{row['zone']} is busy ({stress:.0f}% of capacity). This home's "
+            f"{simulator.COUNTRY['flexible_load']['name']} can be paused. First in line to wait."
         ), None
 
     # Rule 7 - Nothing above matched: all good.
@@ -335,7 +337,7 @@ def relief_plan(readings, at_time, zone):
             extra[r["battery_id"]] = more
     step2_kw = sum(extra.values())
 
-    # Step 3 - FLEXIBLE HOMES DELAY USAGE: pause EV charging and pool pumps, nudge
+    # Step 3 - FLEXIBLE HOMES DELAY USAGE: pause EV charging and other flexible load, nudge
     # smart thermostats. Inconvenient but harmless; they catch up later.
     flexible = [r for r in rows if r["flexible_kw"] > 0]
     step3_kw = sum(r["flexible_kw"] for r in flexible)
@@ -381,13 +383,13 @@ def relief_plan(readings, at_time, zone):
          "kw": step2_kw, "targets": sorted(extra),
          "nothing_to_do": "batteries are already giving all they can spare."},
         {"number": 3, "title": "Ask flexible homes to delay usage",
-         "action": f"Ask {len(flexible)} flexible homes to pause EV charging and pool pumps "
+         "action": f"Ask {len(flexible)} flexible homes to pause their {simulator.COUNTRY['flexible_load']['name']} "
                    f"and nudge their thermostat.",
          "impact": "Small inconvenience. They catch up later in the evening.",
          "kw": step3_kw, "targets": [r["battery_id"] for r in flexible],
          "nothing_to_do": "no flexible load is running."},
         {"number": 4, "title": "Shed regular homes",
-         "action": (f"Cut power to {len(shed4)} regular fleet homes (EV/pool first)"
+         "action": (f"Cut power to {len(shed4)} regular fleet homes (flexible-load homes first)"
                     + (f" and {blocks} street block{'s' if blocks != 1 else ''} of other homes "
                        f"(about {blocks * HOMES_PER_BLOCK} homes)" if blocks else "") + "."),
          "impact": "These homes lose power for a while. Vulnerable and medical homes are not on this list.",
@@ -433,9 +435,18 @@ LOOKAHEAD_HOURS = 4   # how far ahead the grid forecast looks
 
 
 def clock(t):
-    """'2026-10-17 16:30' -> '4:30 PM'"""
+    """'2026-10-17 16:30' -> '4:30 PM' (12-hour countries) or '16:30' (24-hour countries)."""
     h, m = int(t[11:13]), t[14:16]
+    if simulator.COUNTRY["clock"] == "24h":
+        return f"{h:02d}:{m}"
     return f"{h % 12 or 12}{'' if m == '00' else ':' + m} {'AM' if h < 12 else 'PM'}"
+
+
+def voltage_band():
+    """(low, high) normal home voltage for the active country, e.g. 240 V ±5%."""
+    nominal = simulator.COUNTRY["nominal_voltage"]
+    tolerance = simulator.COUNTRY["voltage_tolerance_pct"] / 100
+    return nominal * (1 - tolerance), nominal * (1 + tolerance)
 
 
 def plural(n, word):

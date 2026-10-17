@@ -16,14 +16,19 @@ How to tell silent vs broken (this is the trick for the demo):
   the home's usage, the battery is still working -> it's just not talking.
   If the meter shows the home pulling its FULL usage from the grid -> it's broken.
 
-Run it by itself to print a summary and save fleet_data.csv:
+Country-specific numbers (prices, voltage, map area, zones, buildings...) come from
+config/countries.toml. All of them are approximate.
+
+Run it by itself to print a summary for every country and save fleet_data_<country>.csv:
     python simulator.py
 Only uses things built into Python, so nothing extra to install.
 """
 
 import csv
 import random
+import tomllib
 from datetime import datetime, timedelta
+from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Settings you can tweak
@@ -33,57 +38,77 @@ STEP_MINUTES = 15
 DAY_START = datetime(2026, 10, 17, 0, 0)
 SEED = 42  # same seed = same fake data every run (handy for demos)
 
-BATTERY_CAPACITY_KWH = 20.0
-BATTERY_MAX_KW = 10.0
+# ---------------------------------------------------------------------------
+# Country settings: everything country-specific lives in config/countries.toml
+# ---------------------------------------------------------------------------
+# (All values there are approximate.) The dashboard picks a country with
+# use_country("us_texas"), which fills in the settings below from that file.
+CONFIG_FILE = Path(__file__).parent / "config" / "countries.toml"
 
-# ---------------------------------------------------------------------------
-# Where things are: a small residential part of Wilmington, near the LA harbor
-# ---------------------------------------------------------------------------
-# The region is one section of the grid, split into ZONES (neighborhoods). Each zone is
-# a shape on the map, given by its corners as (latitude, longitude); together they tile
-# the region with no gaps or overlaps, so every battery and building is in exactly one.
-# The shapes sit over streets and houses only, so random points inside them land on
-# dry land. WATER marks the places nearby that are NOT land, as a second safety check.
-#
-# Each zone has its own capacity: how much power the grid can deliver into it. Besides
-# our fleet homes, a zone also has other customers (homes without batteries, shops),
-# given here at their evening peak. Zone stress = everything it's drawing ÷ capacity.
-ZONES = {
-    "North Wilmington": {"shape": [(33.7965, -118.2740), (33.7965, -118.2520), (33.7920, -118.2520), (33.7920, -118.2740)],
-                         "capacity_kw": 560, "other_customers_kw": 250},
-    "West Wilmington":  {"shape": [(33.7920, -118.2740), (33.7920, -118.2630), (33.7860, -118.2630), (33.7860, -118.2740)],
-                         "capacity_kw": 480, "other_customers_kw": 250},
-    "Banning Park":     {"shape": [(33.7920, -118.2630), (33.7920, -118.2520), (33.7860, -118.2520), (33.7860, -118.2630)],
-                         "capacity_kw": 560, "other_customers_kw": 250},
-    "Avalon":           {"shape": [(33.7860, -118.2740), (33.7860, -118.2520), (33.7805, -118.2520), (33.7805, -118.2740)],
-                         "capacity_kw": 520, "other_customers_kw": 250},
-}
-WATER = {
-    "Harbor (Slip 5 / East Basin)": [(33.7720, -118.2900), (33.7720, -118.2200), (33.7400, -118.2200), (33.7400, -118.2900)],
-    "Machado Lake":                 [(33.7920, -118.2980), (33.7920, -118.2860), (33.7780, -118.2860), (33.7780, -118.2980)],
-}
+
+def load_countries():
+    """Read every country from the config file: {country_id: settings}."""
+    with open(CONFIG_FILE, "rb") as f:
+        return tomllib.load(f)["countries"]
+
+
+COUNTRIES = load_countries()
+DEFAULT_COUNTRY = next(iter(COUNTRIES))       # the first one in the file
 
 # Household types. This is how the dispatcher knows "whose power can wait".
-#   type: (description, priority, how common)
-HOUSEHOLD_TYPES = {
-    "regular":    ("Regular household", "normal", 7),
-    "vulnerable": ("Elderly or heat-vulnerable residents", "critical", 2),
-    "medical":    ("Medical equipment at home (oxygen, dialysis)", "critical", 1),
+# The descriptions and priorities are the same everywhere; how common each type is
+# comes from the country's household_mix.
+HOUSEHOLD_DESCRIPTIONS = {
+    "regular":    ("Regular household", "normal"),
+    "vulnerable": ("Elderly or heat-vulnerable residents", "critical"),
+    "medical":    ("Medical equipment at home (oxygen, dialysis)", "critical"),
 }
-# Share of regular homes with an EV charger and pool pump. That load can wait,
-# so these homes are first in line when the grid needs relief.
-FLEXIBLE_SHARE = 0.4
 
-# Critical buildings: protected last, never cut off. If the grid is desperate, the ones
-# with their own backup can be asked to run on it for a while. Names are made up.
-CRITICAL_BUILDINGS = [
-    {"building_id": "HOSP-1", "name": "Harbor Community Hospital", "building_type": "hospital",
-     "lat": 33.7890, "lon": -118.2560, "load_kw": 150, "backup": "Diesel generator", "backup_hours": 24},
-    {"building_id": "FIRE-1", "name": "Wilmington Fire Station", "building_type": "fire_station",
-     "lat": 33.7830, "lon": -118.2625, "load_kw": 15, "backup": "Battery", "backup_hours": 8},
-    {"building_id": "COLD-1", "name": "Harbor Cold Storage", "building_type": "cold_storage",
-     "lat": 33.7880, "lon": -118.2700, "load_kw": 40, "backup": "None", "backup_hours": 0},
-]
+# Filled in by use_country() below
+COUNTRY_ID = COUNTRY = None
+ZONES = WATER = HOUSEHOLD_TYPES = CRITICAL_BUILDINGS = None
+FLEXIBLE_SHARE = BATTERY_CAPACITY_KWH = BATTERY_MAX_KW = None
+
+
+def use_country(country_id):
+    """
+    Switch every country-specific setting to the given country (an id from the
+    config file, e.g. "us_texas"). Call this before simulate().
+
+    ZONES: the region is one section of the grid, split into zones (neighborhoods).
+    Each zone is a shape on the map (corners as latitude, longitude); together they
+    tile the region with no gaps or overlaps, so every battery and building is in
+    exactly one. The shapes sit over streets and houses only, so random points inside
+    them land on dry land. WATER marks nearby places that are NOT land, as a second
+    safety check. Each zone has a capacity; besides our fleet homes it also has other
+    customers (homes without batteries, shops). Zone stress = what it draws ÷ capacity.
+    """
+    global COUNTRY_ID, COUNTRY, ZONES, WATER, HOUSEHOLD_TYPES, CRITICAL_BUILDINGS
+    global FLEXIBLE_SHARE, BATTERY_CAPACITY_KWH, BATTERY_MAX_KW
+    c = COUNTRIES[country_id]
+    COUNTRY_ID, COUNTRY = country_id, c
+    ZONES = {z["name"]: {"shape": [tuple(p) for p in z["shape"]],
+                         "capacity_kw": z["capacity_kw"],
+                         "other_customers_kw": z["other_customers_kw"]}
+             for z in c["zones"]}
+    WATER = {w["name"]: [tuple(p) for p in w["shape"]] for w in c.get("water", [])}
+    HOUSEHOLD_TYPES = {t: (desc, priority, c["household_mix"][t])
+                       for t, (desc, priority) in HOUSEHOLD_DESCRIPTIONS.items()}
+    FLEXIBLE_SHARE = c["household_mix"]["flexible_share"]
+    BATTERY_CAPACITY_KWH = float(c["battery"]["capacity_kwh"])
+    BATTERY_MAX_KW = float(c["battery"]["max_kw"])
+    # Critical buildings: protected last, never cut off. If the grid is desperate, the
+    # ones with their own backup can be asked to run on it for a while.
+    CRITICAL_BUILDINGS = [
+        {"building_id": b["id"], "name": b["name"], "building_type": b["type"],
+         "lat": b["location"][0], "lon": b["location"][1], "load_kw": b["load_kw"],
+         "backup": b["backup"], "backup_hours": b["backup_hours"]}
+        for b in c["critical_buildings"]
+    ]
+
+
+use_country(DEFAULT_COUNTRY)
+
 # Planted problems
 SILENT_BATTERY = "BAT-007"
 SILENT_AT_HOUR = 13      # stops reporting at 1 pm
@@ -187,7 +212,7 @@ def _describe(home):
     """Fill in the description and priority from the household type."""
     description, priority, _ = HOUSEHOLD_TYPES[home["household_type"]]
     if home["has_flexible_load"]:
-        description, priority = "Regular household with EV charger and pool pump", "flexible"
+        description, priority = f"Regular household with {COUNTRY['flexible_load']['name']}", "flexible"
     home["description"], home["priority"] = description, priority
 
 
@@ -243,16 +268,18 @@ def is_heat_wave(hour):
 
 
 def electricity_price(hour):
-    """Price in $ per kWh. Cheap midday (solar), expensive in the evening."""
+    """Price per kWh in the country's currency (from the config file).
+    Cheap midday (solar), expensive in the evening."""
+    p = COUNTRY["prices"]
     if is_heat_wave(hour) and hour >= 16:
-        return 0.90   # heat wave peak: very expensive
+        return p["heat_wave_peak"]            # heat wave peak: very expensive
     if is_heat_wave(hour):
-        return 0.45
+        return p["heat_wave"]
     if 10 <= hour < 15:
-        return 0.08   # lots of solar, cheap
+        return p["cheap_solar"]               # lots of solar, cheap
     if 17 <= hour < 21:
-        return 0.35   # normal evening peak
-    return 0.15
+        return p["evening_peak"]              # normal evening peak
+    return p["night"]
 
 
 def grid_stress(hour):
@@ -269,9 +296,10 @@ def grid_stress(hour):
 
 
 def outdoor_temp_c(hour):
-    base = 22 + 8 * max(0, 1 - abs(hour - 15) / 9)   # warmest around 3 pm
+    t = COUNTRY["temperature_c"]
+    base = t["night"] + t["daily_rise"] * max(0, 1 - abs(hour - 15) / 9)   # warmest around 3 pm
     if is_heat_wave(hour):
-        base += 10
+        base += t["heat_wave_extra"]
     return base
 
 
@@ -287,28 +315,29 @@ def home_usage_kw(home, hour, rng):
         kw += 0.8                             # equipment runs all day
     if home["household_type"] == "vulnerable":
         kw += 0.4                             # someone home all day: fans, medicine fridge
-    if home["has_flexible_load"] and (hour >= 22 or hour < 5):
-        kw += 7.0                             # EV charging overnight
-    if home["has_flexible_load"] and 12 <= hour < 18:
-        kw += 1.5                             # pool pump
+    if home["has_flexible_load"]:
+        kw += flexible_usage_kw(home, hour, heat_wave_part=False)   # EV overnight, daytime load
     if is_heat_wave(hour):
-        kw += rng.uniform(3.0, 5.0)           # air conditioning
+        low, high = COUNTRY["home_load_kw"]["air_conditioning_heat_wave"]
+        kw += rng.uniform(low, high)          # air conditioning / fans
     return kw + rng.uniform(-0.2, 0.2)
 
 
-def flexible_usage_kw(home, hour):
+def flexible_usage_kw(home, hour, heat_wave_part=True):
     """The part of a home's usage that could wait an hour or two without hurting anyone.
-    Only homes with flexible load have it: EV charging, pool pump, and a smart thermostat
-    that can let the house warm up a degree or two during a heat wave."""
+    Only homes with flexible load have it: EV charging overnight, a daytime load (pool
+    pump in Texas, heat-pump water heater in Germany: see the config file), and a smart
+    thermostat that can let the house warm up a degree during a heat wave."""
     if not home["has_flexible_load"]:
         return 0.0
+    flex = COUNTRY["flexible_load"]
     kw = 0.0
     if hour >= 22 or hour < 5:
-        kw += 7.0                             # EV charging
+        kw += COUNTRY["home_load_kw"]["ev_charger"]   # EV charging
     if 12 <= hour < 18:
-        kw += 1.5                             # pool pump
-    if is_heat_wave(hour):
-        kw += 1.0                             # thermostat nudge on the AC
+        kw += flex["daytime_kw"]                      # pool pump / water heater
+    if heat_wave_part and is_heat_wave(hour):
+        kw += flex["thermostat_nudge_kw"]             # thermostat nudge (part of the AC load)
     return kw
 
 
@@ -323,11 +352,11 @@ def battery_plan_kw(hour, charge_pct):
     Pausing that is one of the dispatcher's relief steps.
     """
     if 10 <= hour < 15:
-        return -2.5 if charge_pct < 95 else 0.0   # cheap solar hours: fill up slowly, then hold
+        return -0.25 * BATTERY_MAX_KW if charge_pct < 95 else 0.0   # cheap solar hours: fill up slowly, then hold
     if grid_stress(hour) >= 80 and charge_pct > 15:
-        return 5.0                            # grid is strained: push hard
+        return 0.5 * BATTERY_MAX_KW           # grid is strained: push hard
     if 17 <= hour < 21 and charge_pct > 20:
-        return 3.0                            # evening peak: use stored power
+        return 0.3 * BATTERY_MAX_KW           # evening peak: use stored power
     return 0.0
 
 
@@ -411,9 +440,10 @@ def _run_day(seed, ordinary_day):
 
             # --- what the utility meter sees (always reports) ---
             from_grid_kw = usage - battery_kw   # negative = sending power back to grid
-            voltage = 240 + rng.uniform(-2, 2) - (10 if stress >= 80 else 0)
+            nominal = COUNTRY["nominal_voltage"]
+            voltage = nominal * (1 + rng.uniform(-0.008, 0.008) - (0.04 if stress >= 80 else 0))
             if bid == tripped_id and abs(hour - TRIP_AT_HOUR) < 0.01:
-                voltage = 262.0               # the spike that tripped it
+                voltage = nominal * 1.12      # the spike that tripped it
 
             # --- what the battery reports (may be missing) ---
             silent = (bid == silent_id and hour >= SILENT_AT_HOUR) or \
@@ -453,7 +483,7 @@ def _run_day(seed, ordinary_day):
                 "grid_stress": stress,
                 "heat_wave": is_heat_wave(hour),
                 # Money: discharging when it's pricey saves/earns; charging costs
-                "earnings_usd": round(kwh * price, 3),
+                "earnings": round(kwh * price, 3),     # in the country's currency
             })
 
         # --- Each zone's load and stress at this moment ---
@@ -487,12 +517,12 @@ def snapshot(readings, at_time):
 
 
 def earnings_by_battery(readings, up_to_time=None):
-    """Total $ each battery has earned so far today."""
+    """Total each battery has earned so far today (in the country's currency)."""
     totals = {}
     for r in readings:
         if up_to_time and r["time"] > up_to_time:
             continue
-        totals[r["battery_id"]] = totals.get(r["battery_id"], 0) + r["earnings_usd"]
+        totals[r["battery_id"]] = totals.get(r["battery_id"], 0) + r["earnings"]
     return {k: round(v, 2) for k, v in totals.items()}
 
 
@@ -507,30 +537,36 @@ def save_csv(readings, path="fleet_data.csv"):
 # Run directly: print a quick summary so we can see it works
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    data = simulate()
-    save_csv(data)
-    print(f"Made {len(data)} readings for {FLEET_SIZE} batteries -> fleet_data.csv\n")
+    # Run every country in the config file, one after the other
+    for country_id in COUNTRIES:
+        use_country(country_id)
+        cur = COUNTRY["currency"]
+        print(f"===== {COUNTRY['name']} (all numbers approximate) =====")
+        data = simulate()
+        save_csv(data, f"fleet_data_{country_id}.csv")
+        print(f"Made {len(data)} readings for {FLEET_SIZE} batteries -> fleet_data_{country_id}.csv\n")
 
-    for t in ["2026-10-17 12:00", "2026-10-17 16:30"]:
-        print(f"--- Snapshot at {t} ---")
-        for r in snapshot(data, t):
-            if r["battery_id"] in (SILENT_BATTERY, TRIPPED_BATTERY, BROKEN_BATTERY):
-                print(f"  {r['battery_id']} ({r['household_type']}): status={r['battery_status']}, "
-                      f"charge={r['charge_pct']}, temp={r['inverter_temp_c']}, "
-                      f"usage={r['home_usage_kw']} kW, from grid={r['from_grid_kw']} kW")
-        row = snapshot(data, t)[0]
-        print(f"  grid stress={row['grid_stress']}, price=${row['price_per_kwh']}/kWh, "
-              f"heat wave={row['heat_wave']}\n")
+        for t in ["2026-10-17 12:00", "2026-10-17 16:30"]:
+            print(f"--- Snapshot at {t} ---")
+            for r in snapshot(data, t):
+                if r["battery_id"] in (SILENT_BATTERY, TRIPPED_BATTERY, BROKEN_BATTERY):
+                    print(f"  {r['battery_id']} ({r['household_type']}): status={r['battery_status']}, "
+                          f"charge={r['charge_pct']}, temp={r['inverter_temp_c']}, "
+                          f"usage={r['home_usage_kw']} kW, from grid={r['from_grid_kw']} kW")
+            row = snapshot(data, t)[0]
+            print(f"  grid stress={row['grid_stress']}, price={cur}{row['price_per_kwh']}/kWh, "
+                  f"heat wave={row['heat_wave']}\n")
 
-    totals = earnings_by_battery(data)
-    print(f"Whole fleet earned ${sum(totals.values()):.2f} today "
-          f"(avg ${sum(totals.values()) / len(totals):.2f} per battery)\n")
+        totals = earnings_by_battery(data)
+        print(f"Whole fleet earned {cur}{sum(totals.values()):.2f} today "
+              f"(avg {cur}{sum(totals.values()) / len(totals):.2f} per battery)\n")
 
-    homes = snapshot(data, "2026-10-17 00:00")
-    print("Household types:", {t: sum(h["household_type"] == t for h in homes) for t in HOUSEHOLD_TYPES},
-          "| with EV + pool:", sum(h["priority"] == "flexible" for h in homes))
-    print("Homes per zone:", {z: sum(h["zone"] == z for h in homes) for z in ZONES})
-    print("All homes on land:", all(on_land(h["lat"], h["lon"]) for h in homes))
-    print("\nCritical buildings:")
-    for b in critical_buildings():
-        print(f"  {b['name']} ({b['building_type']}) at {b['lat']}, {b['lon']}, {b['load_kw']} kW")
+        homes = snapshot(data, "2026-10-17 00:00")
+        print("Household types:", {t: sum(h["household_type"] == t for h in homes) for t in HOUSEHOLD_TYPES},
+              "| with flexible load:", sum(h["priority"] == "flexible" for h in homes))
+        print("Homes per zone:", {z: sum(h["zone"] == z for h in homes) for z in ZONES})
+        print("All homes on land:", all(on_land(h["lat"], h["lon"]) for h in homes))
+        print("\nCritical buildings:")
+        for b in critical_buildings():
+            print(f"  {b['name']} ({b['building_type']}) at {b['lat']}, {b['lon']}, {b['load_kw']} kW")
+        print()
