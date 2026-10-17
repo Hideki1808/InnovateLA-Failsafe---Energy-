@@ -45,6 +45,10 @@ data = pd.DataFrame(readings)
 
 st.title("Home Battery Fleet")
 
+# While the page redraws (every step of Play), Streamlit normally fades everything out
+# for a moment. That makes the map and numbers flicker, so turn the fade off.
+st.html("<style>[data-stale='true'] { opacity: 1 !important; transition: none !important; }</style>")
+
 live_tab, earn_tab = st.tabs(["⚡ Live dispatch", "💰 Normal day earnings"])
 
 # ===========================================================================
@@ -128,8 +132,11 @@ with live_tab:
             st.session_state.pause_note = " ".join(msg for _, msg in new_events)
             st.rerun()                           # redraw so the button says Play again
 
+    # The pause message gets a slot that's always on the page (empty when not paused), so
+    # the map below never shifts position. A shift would make Streamlit rebuild the map.
+    pause_slot = st.empty()
     if st.session_state.pause_note:
-        st.info(f"⏸ **Paused at {now[11:]}.** {st.session_state.pause_note} Press Play to continue.")
+        pause_slot.info(f"⏸ **Paused at {now[11:]}.** {st.session_state.pause_note} Press Play to continue.")
 
     # --- Dispatcher summary: three plain-English lines, written by the rules ---
     st.session_state.setdefault("approved", set())
@@ -161,6 +168,8 @@ with live_tab:
             "lat": max(p[1] for p in corners), "lon": min(p[0] for p in corners),
             "title": name, "line1": f"Zone {state.lower()}: using {stress:.0f}% of its capacity", "line2": "",
         })
+
+    FADE_MS = 600   # how long a dot or zone takes to fade to its new color
 
     # Dot fill = battery state. Ring = household type (none for regular homes).
     STATE_COLORS = {rules.NORMAL: [40, 170, 90], rules.WATCH: [240, 200, 40],
@@ -194,15 +203,17 @@ with live_tab:
     } for b in simulator.critical_buildings()]
 
     def dots(data, radius_m, min_px, max_px, color, pickable=False):
-        """A layer of round dots. Rings are drawn as a slightly bigger dot underneath."""
+        """A layer of round dots. Rings are drawn as a slightly bigger dot underneath.
+        When a dot changes color it fades over FADE_MS instead of jumping."""
         return pdk.Layer("ScatterplotLayer", data, get_position=["lon", "lat"], get_fill_color=color,
                          get_radius=radius_m, radius_min_pixels=min_px, radius_max_pixels=max_px,
-                         pickable=pickable)
+                         pickable=pickable, transitions={"getFillColor": FADE_MS})
 
     layers = [
         # Zones: lightly shaded, with their name and stress in the corner
         pdk.Layer("PolygonLayer", zone_rows, get_polygon="polygon", get_fill_color="fill",
-                  get_line_color=ink + [90], line_width_min_pixels=1, pickable=True),
+                  get_line_color=ink + [90], line_width_min_pixels=1, pickable=True,
+                  transitions={"getFillColor": FADE_MS}),
         pdk.Layer("TextLayer", zone_rows, get_position=["lon", "lat"], get_text="label",
                   get_color=ink, get_size=14, font_weight=600, get_text_anchor="'start'",
                   get_alignment_baseline="'top'", get_pixel_offset=[6, 6]),
@@ -223,7 +234,7 @@ with live_tab:
         # Hover box: the formatting lives here; each row just supplies plain title/line1/line2
         tooltip={"html": "<b>{title}</b><br/>{line1}<br/>{line2}",
                  "style": {"maxWidth": "320px", "fontSize": "13px"}},
-    ), height=480)
+    ), height=480, key="fleet_map")   # same key every time = update the map in place, keep your zoom
 
     # Legend: what every color and shape means
     def swatch(fill, ring=None, ring_px=0, square=False):
