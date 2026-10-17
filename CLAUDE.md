@@ -46,6 +46,9 @@ Tabs:
     ones first, then street blocks of other customers) → shed vulnerable homes →
     critical buildings switch to their own backup. Medical homes are never cut. Every
     step needs the dispatcher's Approve click (cutting power needs an extra confirmation).
+  - Look: off-white page, white rounded panels, one coral accent used sparingly
+    (title, urgent key numbers, Needs dispatcher), small uppercase labels, big numbers
+    with captions. Red on the map means Needs dispatcher only, with a pulsing ring.
   - Layout: key numbers on top, big map (zones shaded by stress, dots by battery state,
     rings by household type), side panel with summary + Alerts / Response ladder tabs.
     Play runs the day and pauses on new events; map updates smoothly.
@@ -79,6 +82,8 @@ wave) and the general shape of a day (cheap solar 10-3, evening peak 5-9).
 - rules.py: decides what's normal, what can wait, what needs the dispatcher, the relief
   plan per zone and the summary
 - config/countries.toml: everything country-specific (all values approximate)
+- style.py: the look (colors, a little CSS, stat cards, labels, alert list, legend)
+- .streamlit/config.toml: the theme (off-white page, white rounded panels, coral accent, Inter)
 - requirements.txt: list of Python packages to install
 
 ## Conventions

@@ -1,21 +1,35 @@
-# Look and feel of the dashboard. Built for a projector: light background,
-# dark text, a larger base font, and one set of status colors used everywhere.
+# Look and feel of the dashboard.
+# Style: off-white page, clean white rounded panels, ONE coral-red accent used
+# sparingly (headings, key numbers, urgent alerts), simple sans-serif type, lots of
+# space. Built for a projector: large base font and strong contrast.
 
 [theme]
 base = "light"
-primaryColor = "#334155"             # slate: buttons and the slider (neutral, so it never looks like a status)
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f1f5f9"
-textColor = "#0f172a"
-baseFontSize = 18                    # a bit bigger than normal, readable from the back of the room
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+baseFontSize = 18                    # readable from the back of the room
+baseRadius = "16px"                  # soft rounded corners on panels and widgets
+buttonRadius = "999px"               # pill-shaped buttons
+paddingTop = "1.5rem"
 
-# Status colors: the same ones as the map dots (app.py STATE_COLORS)
-greenColor = "#28aa5a"               # Normal
-yellowColor = "#e0b000"              # Watch
-blueColor = "#2878dc"                # Can wait
-redColor = "#dc3232"                 # Needs dispatcher / strained
-orangeColor = "#f5781e"              # vulnerable homes / busy zones
-violetColor = "#8c46d2"              # medical homes
+backgroundColor = "#f2f1ef"          # off-white / light gray page
+secondaryBackgroundColor = "#ffffff" # panels and inputs are white
+textColor = "#1c1c1e"                # near-black ink
+borderColor = "#e4e2df"              # very light borders, barely there
+showWidgetBorder = false
+primaryColor = "#1c1c1e"             # controls stay ink-black: coral is saved for what matters
+
+# Status colors. Coral red is the accent AND "Needs dispatcher" (same as the map dots).
+redColor = "#e8453c"                 # Needs dispatcher / strained / accent
+yellowColor = "#e0a100"              # Watch
+blueColor = "#2f6fdb"                # Can wait
+greenColor = "#2e9e5b"               # Normal
+orangeColor = "#f08a24"              # busy zones
+violetColor = "#7b4fd6"              # medical homes
+redBackgroundColor = "#fdecea"
+yellowBackgroundColor = "#fdf5df"
+blueBackgroundColor = "#e9f0fc"
+greenBackgroundColor = "#e8f5ee"
+chartCategoricalColors = ["#e8453c", "#2f6fdb", "#2e9e5b", "#e0a100", "#7b4fd6"]
 
 [client]
 toolbarMode = "minimal"              # hide the developer menu during the demo

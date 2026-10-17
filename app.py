@@ -14,6 +14,7 @@ import streamlit as st
 
 import rules
 import simulator
+import style
 
 st.set_page_config(page_title="Fleet Dispatcher", layout="wide")
 started = time.time()   # used by Play to keep a steady pace
@@ -43,14 +44,37 @@ def run_rules(country_id, at_time):
     return pd.DataFrame(rules.triage(load_readings(country_id), at_time))
 
 
-# Page-wide style tweaks:
-#  - while the page redraws (every step of Play), Streamlit normally fades everything out
-#    for a moment, which makes the map and numbers flicker: turn that off
-#  - less empty space at the top, so the map fits on a projector screen
-st.html("""<style>
-  [data-stale='true'] { opacity: 1 !important; transition: none !important; }
-  [data-testid='stMainBlockContainer'], .block-container { padding-top: 1.2rem !important; }
-</style>""")
+# Page look: the theme is in .streamlit/config.toml; style.py adds the few extras
+# (section labels, big key numbers, white panels, no grey-out while Play redraws)
+st.html(style.CSS)
+
+PULSE_SECONDS = 1.0   # one breath of the ring around "Needs dispatcher" dots
+
+
+@st.fragment(run_every=PULSE_SECONDS)
+def draw_map(below, above, urgent_rows, view, tooltip):
+    """
+    Draw the map. This little section redraws itself every PULSE_SECONDS (the rest of
+    the page doesn't), so the ring around each "Needs dispatcher" dot can grow and fade,
+    then shrink back: a gentle pulse that makes urgent homes easy to spot.
+    below / above: map layers drawn under / over the pulsing rings.
+    """
+    beat = st.session_state.get("pulse_beat", 0) + 1
+    st.session_state.pulse_beat = beat
+    out = beat % 2 == 0                       # every other beat the ring is big and faint
+    fade_ms = int(PULSE_SECONDS * 950)
+    pulse = pdk.Layer(
+        "ScatterplotLayer", urgent_rows, get_position=["lon", "lat"], filled=False, stroked=True,
+        get_radius=120 if out else 45, radius_min_pixels=11, radius_max_pixels=34,
+        get_line_color=style.rgb(style.CORAL, 30 if out else 230), line_width_min_pixels=3,
+        transitions={"getRadius": fade_ms, "getLineColor": fade_ms},
+    )
+    st.pydeck_chart(pdk.Deck(layers=below + [pulse] + above, initial_view_state=view,
+                             map_style="light_no_labels", tooltip=tooltip),
+                    height=520, key="fleet_map")   # same key every time = update the map in place
+                    #   (also when switching country: it then moves to the new view, centred)
+
+
 # --- Country: everything country-specific comes from config/countries.toml ---
 st.session_state.setdefault("country", simulator.DEFAULT_COUNTRY)
 
@@ -61,20 +85,21 @@ def reset_demo():
         st.session_state.pop(key, None)
 
 
-title_col, country_col = st.columns([3, 1.2], vertical_alignment="center")
+title_col, country_col = st.columns([3, 1.2], vertical_alignment="bottom")
 country_col.selectbox("Country", list(simulator.COUNTRIES), key="country", on_change=reset_demo,
                       format_func=lambda c: simulator.COUNTRIES[c]["name"], label_visibility="collapsed")
 country_id = st.session_state.country
 simulator.use_country(country_id)          # rules.py and simulator.py now use this country
 COUNTRY = simulator.COUNTRY
 CUR = COUNTRY["currency"]                  # e.g. "$" or "€"
-title_col.markdown(f"### ⚡ Home Battery Fleet · {COUNTRY['region']}")
+title_col.html(style.label(f"Live grid dispatch · {COUNTRY['region']}")
+               + '<p class="brand">Home Battery Fleet</p>')
 country_col.caption("Simulated data. Country numbers are approximate.")
 
 readings = load_readings(country_id)
 data = pd.DataFrame(readings)
 
-live_tab, earn_tab = st.tabs(["⚡ Live dispatch", "💰 Normal day earnings"])
+live_tab, earn_tab = st.tabs(["Live dispatch", "Normal day earnings"])
 
 # ===========================================================================
 # Tab 1: live dispatch (the demo day with the country's stress event)
@@ -166,42 +191,39 @@ with live_tab:
     if st.session_state.pause_note:
         pause_slot.info(f"⏸ **Paused at {now[11:]}.** {st.session_state.pause_note} Press Play to continue.")
 
-    # --- Key numbers across the top: big and few, readable from the back of the room ---
+    # --- Key numbers across the top: very large number, short caption underneath ---
+    # Coral only when the number is a warning sign; everything else stays ink-black.
     counts = results["category"].value_counts()
     zone_stress_now = current.groupby("zone")["zone_stress"].first()
     strained_zones = int((zone_stress_now >= rules.STRAINED_GRID).sum())
     worst_zone = zone_stress_now.idxmax()
-    k = st.columns(6)
-    # Under the clock: the stress event's name while it's happening
-    event_on = bool(current.iloc[0]["stress_event"])
-    k[0].metric("🕒 Time", rules.clock(now), rules.event_label() if event_on else None,
-                delta_color="off", delta_arrow="off")
-    k[1].metric(ICONS[rules.NEEDS_DISPATCHER], int(counts.get(rules.NEEDS_DISPATCHER, 0)))
-    k[2].metric(ICONS[rules.WATCH], int(counts.get(rules.WATCH, 0)))
-    k[3].metric(ICONS[rules.CAN_WAIT], int(counts.get(rules.CAN_WAIT, 0)))
-    k[4].metric("🔥 Zones strained", f"{strained_zones} of {len(zone_stress_now)}")
-    k[5].metric("📈 Busiest zone", f"{zone_stress_now[worst_zone]:.0f}%", worst_zone,
-                delta_color="off", delta_arrow="off",
-                help="Share of the zone's capacity being used right now")
+    worst = zone_stress_now[worst_zone]
+    needs = int(counts.get(rules.NEEDS_DISPATCHER, 0))
+    event_on = bool(current.iloc[0]["stress_event"])      # is the heat wave / cold snap on?
+    st.html(style.stats([
+        (rules.clock(now), rules.event_label() if event_on else "local time", False),
+        (needs, "need the dispatcher", needs > 0),
+        (int(counts.get(rules.WATCH, 0)), "to watch", False),
+        (int(counts.get(rules.CAN_WAIT, 0)), "can wait", False),
+        (f"{strained_zones} of {len(zone_stress_now)}", "zones strained", strained_zones > 0),
+        (f"{worst:.0f}%", f"busiest: {worst_zone}", worst >= rules.STRAINED_GRID),
+    ]))
 
     # --- Main area: big map on the left, side panel with what to do on the right ---
-    left, right = st.columns([1.9, 1.1], gap="large")
+    left, right = st.columns([1.9, 1.1], gap="medium")
 
-    with left:
+    with left, st.container(key="panel_map"):
+        st.html(style.label("Fleet map"))
         # --- Map: zones lightly shaded by how strained they are, homes colored by category ---
-        dark = False   # the dashboard uses a light theme (see .streamlit/config.toml), so a light map
-        ink = [235, 235, 230] if dark else [40, 40, 38]            # label color that reads on the map
+        ink = style.rgb(style.INK)                 # label color on the light map
 
         zone_now = current.groupby("zone")[["zone_stress"]].first()["zone_stress"]
         zone_rows = []
         for name, z in simulator.ZONES.items():
             stress = zone_now[name]
-            if stress >= rules.STRAINED_GRID:
-                fill, state = [220, 50, 50, 60], "Strained"
-            elif stress >= rules.BUSY_GRID:
-                fill, state = [245, 170, 30, 50], "Busy"
-            else:
-                fill, state = [120, 140, 170, 45], "OK"
+            state = ("Strained" if stress >= rules.STRAINED_GRID
+                     else "Busy" if stress >= rules.BUSY_GRID else "OK")
+            fill = style.rgb(style.ZONE_HEX[state], {"Strained": 32, "Busy": 38, "OK": 26}[state])
             corners = [[lon, lat] for lat, lon in z["shape"]]
             zone_rows.append({
                 "polygon": corners, "fill": fill, "label": f"{name}: {stress:.0f}%",
@@ -213,15 +235,15 @@ with live_tab:
         FADE_MS = 600   # how long a dot or zone takes to fade to its new color
 
         # Dot fill = battery state. Ring = household type (none for regular homes).
-        STATE_COLORS = {rules.NORMAL: [40, 170, 90], rules.WATCH: [240, 200, 40],
-                        rules.CAN_WAIT: [40, 120, 220], rules.NEEDS_DISPATCHER: [220, 50, 50]}
-        RING_COLORS = {"vulnerable": [245, 120, 30], "medical": [140, 70, 210]}
-        BUILDING_COLOR = [90, 100, 120]
+        # Colors come from style.py so the map, alerts and legend always match.
+        STATE_COLORS = {state: style.rgb(color) for state, color in style.STATE_HEX.items()}
+        RING_COLORS = {kind: style.rgb(color) for kind, color in style.RING_HEX.items()}
+        BUILDING_COLOR = style.rgb(style.BUILDING_HEX)
         home_rows = []
         for _, r in current.merge(results[["battery_id", "category", "reason"]], on="battery_id").iterrows():
             home_rows.append({
                 "lat": r["lat"], "lon": r["lon"], "color": STATE_COLORS[r["category"]],
-                "household_type": r["household_type"],
+                "household_type": r["household_type"], "category": r["category"],
                 "ring": RING_COLORS.get(r["household_type"], [0, 0, 0, 0]),
                 "title": f"{r['battery_id']} · {r['household_type']} home · {r['zone']}",
                 "line1": f"Battery: {r['category']}"
@@ -230,6 +252,7 @@ with live_tab:
             })
         vulnerable_rows = [h for h in home_rows if h["household_type"] == "vulnerable"]
         medical_rows = [h for h in home_rows if h["household_type"] == "medical"]
+        urgent_rows = [h for h in home_rows if h["category"] == rules.NEEDS_DISPATCHER]
 
         # Critical buildings are squares about 70 m across (corners worked out in degrees)
         half_lat, half_lon = 35 / 111_320, 35 / 92_530
@@ -248,9 +271,10 @@ with live_tab:
             When a dot changes color it fades over FADE_MS instead of jumping."""
             return pdk.Layer("ScatterplotLayer", data, get_position=["lon", "lat"], get_fill_color=color,
                              get_radius=radius_m, radius_min_pixels=min_px, radius_max_pixels=max_px,
+                             stroked=True, get_line_color=[255, 255, 255], line_width_min_pixels=1.5,
                              pickable=pickable, transitions={"getFillColor": FADE_MS})
 
-        layers = [
+        below = [
             # Zones: lightly shaded, with their name and stress in the corner
             pdk.Layer("PolygonLayer", zone_rows, get_polygon="polygon", get_fill_color="fill",
                       get_line_color=ink + [90], line_width_min_pixels=1, pickable=True,
@@ -260,68 +284,40 @@ with live_tab:
                       get_line_color=[255, 255, 255], line_width_min_pixels=2, pickable=True),
             pdk.Layer("TextLayer", character_set="'auto'", data=building_rows, get_position=["lon", "lat"], get_text="label", get_color=ink,
                       get_size=14, font_weight=600, get_text_anchor="'start'", get_pixel_offset=[14, 0]),
-            # Homes: rings first (thick purple for medical, orange for vulnerable), then the dot on top
-            dots(medical_rows, 60, 11, 16, "ring"),
-            dots(vulnerable_rows, 48, 9, 13, "ring"),
-            dots(home_rows, 32, 6, 9, "color", pickable=True),
+        ]
+        # (the pulsing rings around "Needs dispatcher" homes are drawn here, by draw_map)
+        above = [
+            # Homes: rings first (thick violet for medical, thin ink for vulnerable), then the dot
+            dots(medical_rows, 62, 12, 16, "ring"),
+            dots(vulnerable_rows, 46, 9, 12, "ring"),
+            dots(home_rows, 32, 7, 10, "color", pickable=True),
             # Zone names last, on a white tag, so no dot ever covers them
             pdk.Layer("TextLayer", character_set="'auto'", data=zone_rows, get_position=["lon", "lat"], get_text="label",
                       get_color=ink, get_size=16, font_weight=700, get_text_anchor="'start'",
                       get_alignment_baseline="'top'", get_pixel_offset=[6, 6],
                       background=True, get_background_color=[255, 255, 255, 220], background_padding=[4, 2]),
         ]
-        st.pydeck_chart(pdk.Deck(
-            layers=layers,
-            initial_view_state=pdk.ViewState(latitude=COUNTRY["map"]["center"][0],
-                                             longitude=COUNTRY["map"]["center"][1],
-                                             zoom=COUNTRY["map"]["zoom"]),
-            map_style="dark" if dark else "light",
-            # Hover box: the formatting lives here; each row just supplies plain title/line1/line2
-            tooltip={"html": "<b>{title}</b><br/>{line1}<br/>{line2}",
-                     "style": {"maxWidth": "340px", "fontSize": "15px"}},
-        ), height=560, key="fleet_map")   # same key every time = update the map in place (also when
-        #                                   switching country: it then moves to the new view, centred)
+        view = pdk.ViewState(latitude=COUNTRY["map"]["center"][0], longitude=COUNTRY["map"]["center"][1],
+                             zoom=COUNTRY["map"]["zoom"])
+        # Hover box: the formatting lives here; each row just supplies plain title/line1/line2
+        tooltip = {"html": "<b>{title}</b><br/>{line1}<br/>{line2}",
+                   "style": {"maxWidth": "340px", "fontSize": "15px", "backgroundColor": "#ffffff",
+                             "color": style.INK, "borderRadius": "12px", "padding": "10px 12px",
+                             "boxShadow": "0 4px 18px rgba(0,0,0,.12)"}}
+        draw_map(below, above, urgent_rows, view, tooltip)
 
         # Legend: what every color and shape means
-        def swatch(fill, ring=None, ring_px=0, square=False):
-            css = f"rgb({fill[0]},{fill[1]},{fill[2]})"
-            border = f"{ring_px}px solid rgb({ring[0]},{ring[1]},{ring[2]})" if ring else "1px solid transparent"
-            shape = "2px" if square else "50%"
-            return (f'<span style="display:inline-block;width:12px;height:12px;background:{css};'
-                    f'border:{border};border-radius:{shape};vertical-align:middle;margin:0 6px 0 14px"></span>')
-        grey = [150, 150, 150]
-        st.html(
-            '<div style="font-size:15px;line-height:2">'
-            "<b>Battery (dot color):</b>"
-            f"{swatch(STATE_COLORS[rules.NORMAL])}Normal"
-            f"{swatch(STATE_COLORS[rules.WATCH])}Watch"
-            f"{swatch(STATE_COLORS[rules.CAN_WAIT])}Can wait"
-            f"{swatch(STATE_COLORS[rules.NEEDS_DISPATCHER])}Needs dispatcher<br/>"
-            "<b>Household (ring):</b>"
-            f"{swatch(grey)}Regular (no ring)"
-            f"{swatch(grey, RING_COLORS['vulnerable'], 2)}Vulnerable"
-            f"{swatch(grey, RING_COLORS['medical'], 4)}Medical (thick)"
-            f"{swatch(BUILDING_COLOR, [255, 255, 255], 2, square=True)}Critical building<br/>"
-            "<b>Zone (shading):</b>"
-            f"{swatch([120, 140, 170], square=True)}OK"
-            f"{swatch([245, 170, 30], square=True)}Busy (70%+ of capacity)"
-            f"{swatch([220, 50, 50], square=True)}Strained (80%+)"
-            '<span style="margin-left:14px;opacity:.7">Hover anything on the map for details.</span>'
-            "</div>"
-        )
+        st.html(style.legend())
 
-
-    with right:
+    with right, st.container(key="panel_side"):
         # --- Dispatcher summary: three plain-English lines, written by the rules ---
         st.session_state.setdefault("approved", set())
         approved_now = {(zone, n) for t, zone, n in st.session_state.approved if t == now}
         brief = rules.summary(readings, now, results.to_dict("records"), approved_now)
-        box = {"ok": st.success, "warning": st.warning, "error": st.error}[brief["level"]]
-        box(f"**📋 What's happening:** {brief['status']}  \n"
-            f"{brief['outlook']}  \n"
-            f"{brief['action']}")
+        st.html(style.label("What's happening") + style.pill(brief["level"]))
+        st.markdown(f"{brief['status']}  \n{brief['outlook']}  \n{brief['action']}")
 
-        alerts_tab, ladder_tab = st.tabs(["🚨 Alerts", "🪜 Response ladder"])
+        alerts_tab, ladder_tab = st.tabs(["Alerts", "Response ladder"])
         with alerts_tab:
             # --- Alerts: everything that isn't Normal, most urgent first ---
             alerts = results[results["category"] != rules.NORMAL].copy()   # (the rules already give each zone)
@@ -330,20 +326,12 @@ with live_tab:
             alerts = alerts.sort_values(["severity", "wait_order", "battery_id"], ascending=[True, False, True])
 
             if alerts.empty:
-                st.success("All clear: every battery is normal right now.")
+                st.html(f'<p style="color:{style.MUTED}">All clear: every battery is normal right now.</p>')
             else:
-                # Scrollable box so a long list doesn't push the rest of the page down
-                with st.container(height=560, border=False):
-                    for _, a in alerts.iterrows():
-                        guess = f" · silent: **{a['silent_guess']}**" if pd.notna(a["silent_guess"]) else ""
-                        text = (f"**{a['battery_id']}** · {a['household_type']} · {a['zone']}{guess}  \n"
-                                f"{a['reason']}")
-                        if a["category"] == rules.NEEDS_DISPATCHER:
-                            st.error(text, icon="🔴")
-                        elif a["category"] == rules.WATCH:
-                            st.warning(text, icon="🟡")
-                        else:
-                            st.info(text, icon="🔵")
+                # Scrollable list so a long one doesn't push the rest of the page down
+                rows = alerts.assign(silent_guess=alerts["silent_guess"].where(alerts["silent_guess"].notna(), None))
+                with st.container(height=520, border=False):
+                    st.html(style.alert_list(rows.to_dict("records")))
 
         with ladder_tab:
             with st.container(height=560, border=False):
@@ -364,7 +352,7 @@ with live_tab:
 
 
                 # Every zone at a glance: a colored square, the name and how full it is
-                ZONE_DOT = {"Strained": "#dc3232", "Busy": "#f5a91e", "OK": "#94a3b8"}
+                ZONE_DOT = style.ZONE_HEX
                 zone_now = current.groupby("zone", sort=False)[["zone_stress", "zone_load_kw", "zone_capacity_kw"]].first()
                 lines = []
                 for zone, z in zone_now.sort_values("zone_stress", ascending=False).iterrows():
@@ -526,10 +514,10 @@ with live_tab:
 # ===========================================================================
 # Tab 2: how the fleet earns money on a normal day (no stress event, no problems)
 # ===========================================================================
-CHARGE_COLOR = "#3987e5"      # blue: taking power in
-DISCHARGE_COLOR = "#eb6834"   # orange: giving power out
-PRICE_COLOR = "#9a9893"       # neutral gray: the price line
-MONEY_COLOR = "#7c6ee0"       # violet: the running total
+CHARGE_COLOR = style.STATE_HEX[rules.CAN_WAIT]   # blue: taking power in
+DISCHARGE_COLOR = "#f08a24"                       # orange: giving power out
+PRICE_COLOR = style.MUTED                         # neutral gray: the price line
+MONEY_COLOR = style.CORAL                         # the accent: the money is the point
 
 
 @st.cache_data
@@ -553,10 +541,11 @@ def in_text(s):
     return s.replace("$", "\\$")
 
 
-with earn_tab:
+with earn_tab, st.container(key="panel_earnings"):
     simulator.use_country(country_id)
     calm = load_ordinary_day(country_id)
     prices = COUNTRY["prices"]
+    st.html(style.label("How the fleet earns its keep on a normal day"))
     st.markdown(
         "On a normal day there's no emergency. Each battery earns its keep the simple way: "
         "**buy power when it's cheap** (midday, when solar floods the grid) and "
@@ -580,15 +569,15 @@ with earn_tab:
     batteries = calm["battery_id"].nunique()
     per_day = day["money"].sum()
     shifted_kwh = (calm["battery_kw"].clip(lower=0) * simulator.STEP_MINUTES / 60).sum()
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Fleet earns per day", money(per_day, 0))
-    c2.metric("Per battery per day", money(per_day / batteries))
-    c3.metric("Per battery per year", money(per_day / batteries * 365, 0),
-              help="Just the daily number × 365. Real years have cloudy days and holidays.")
-    c4.metric("Energy moved to the evening", f"{shifted_kwh:,.0f} kWh")
+    st.html(style.stats([
+        (money(per_day, 0), "fleet earns per day", True),
+        (money(per_day / batteries), "per battery per day", False),
+        (money(per_day / batteries * 365, 0), "per battery per year (daily × 365)", False),
+        (f"{shifted_kwh:,.0f} kWh", "moved to the evening", False),
+    ]))
 
     # --- Chart 1: the price of power through the day ---
-    st.subheader("1. The price of power changes through the day")
+    st.html(style.label("1 · The price of power changes through the day"))
     price_line = alt.Chart(day).mark_line(interpolate="step-after", strokeWidth=2, color=PRICE_COLOR).encode(
         x=x,
         y=alt.Y("price", title=f"{CUR} per kWh",
@@ -605,7 +594,7 @@ with earn_tab:
     st.altair_chart((price_line + price_labels).properties(height=200), width="stretch")
 
     # --- Chart 2: what the batteries do about it ---
-    st.subheader("2. So the batteries charge when it's cheap and discharge at the peak")
+    st.html(style.label("2 · So batteries charge when it's cheap and discharge at the peak"))
     bars = alt.Chart(day[day["fleet_kw"] != 0]).mark_bar(cornerRadius=4).encode(
         x=x,
         y=alt.Y("fleet_kw", title="Whole fleet, kW"),
@@ -623,7 +612,7 @@ with earn_tab:
                "so the homes don't buy at peak prices.")
 
     # --- Chart 3: the money adding up ---
-    st.subheader("3. Small cost at midday, bigger savings in the evening")
+    st.html(style.label("3 · Small cost at midday, bigger savings in the evening"))
     money_line = alt.Chart(day).mark_line(strokeWidth=2, color=MONEY_COLOR).encode(
         x=x,
         y=alt.Y("running_total", title=f"Fleet total so far ({CUR})",
@@ -634,7 +623,7 @@ with earn_tab:
     st.altair_chart(money_line.properties(height=200), width="stretch")
 
     # --- The simple math ---
-    st.subheader("The math")
+    st.html(style.label("The math"))
     hours_per_step = simulator.STEP_MINUTES / 60
     bought = calm[calm["battery_kw"] < 0]
     used = calm[calm["battery_kw"] > 0]
