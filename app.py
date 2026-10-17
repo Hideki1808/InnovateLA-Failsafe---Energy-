@@ -159,52 +159,99 @@ with live_tab:
             "polygon": corners, "fill": fill, "label": f"{name}: {stress:.0f}%",
             # Label in the zone's top-left corner, out of the way of the dots
             "lat": max(p[1] for p in corners), "lon": min(p[0] for p in corners),
-            "tip": f"<b>{name}</b><br/>{state}: using {stress:.0f}% of its capacity",
+            "title": name, "line1": f"Zone {state.lower()}: using {stress:.0f}% of its capacity", "line2": "",
         })
 
-    MAP_COLORS = {rules.NEEDS_DISPATCHER: [220, 50, 50], rules.WATCH: [245, 140, 30],
-                  rules.CAN_WAIT: [40, 120, 220], rules.NORMAL: [40, 170, 90]}
+    # Dot fill = battery state. Ring = household type (none for regular homes).
+    STATE_COLORS = {rules.NORMAL: [40, 170, 90], rules.WATCH: [240, 200, 40],
+                    rules.CAN_WAIT: [40, 120, 220], rules.NEEDS_DISPATCHER: [220, 50, 50]}
+    RING_COLORS = {"vulnerable": [245, 120, 30], "medical": [140, 70, 210]}
+    BUILDING_COLOR = [90, 100, 120]
     home_rows = []
     for _, r in current.merge(results[["battery_id", "category", "reason"]], on="battery_id").iterrows():
         home_rows.append({
-            "lat": r["lat"], "lon": r["lon"], "color": MAP_COLORS[r["category"]],
-            "radius": 45 if r["household_type"] == "medical" else 30,  # metres; medical homes a bit bigger
-            "tip": f"<b>{r['battery_id']}</b> · {r['household_type']} home · {r['zone']}<br/>"
-                   f"<b>{r['category']}</b>: {r['reason']}",
+            "lat": r["lat"], "lon": r["lon"], "color": STATE_COLORS[r["category"]],
+            "household_type": r["household_type"],
+            "ring": RING_COLORS.get(r["household_type"], [0, 0, 0, 0]),
+            "title": f"{r['battery_id']} · {r['household_type']} home · {r['zone']}",
+            "line1": f"Battery: {r['category']}"
+                     + (f", {r['charge_pct']:.0f}% charged" if pd.notna(r["charge_pct"]) else ", not reporting"),
+            "line2": r["reason"],
         })
+    vulnerable_rows = [h for h in home_rows if h["household_type"] == "vulnerable"]
+    medical_rows = [h for h in home_rows if h["household_type"] == "medical"]
 
+    # Critical buildings are squares about 70 m across (corners worked out in degrees)
+    half_lat, half_lon = 35 / 111_320, 35 / 92_530
     building_rows = [{
         "lat": b["lat"], "lon": b["lon"], "label": b["name"],
-        "tip": f"<b>{b['name']}</b> · critical building · {b['zone']}<br/>"
-               f"Uses about {b['load_kw']} kW. Backup: {b['backup'].lower()}"
-               + (f", {b['backup_hours']} h" if b["backup_hours"] else ""),
+        "square": [[b["lon"] - half_lon, b["lat"] - half_lat], [b["lon"] + half_lon, b["lat"] - half_lat],
+                   [b["lon"] + half_lon, b["lat"] + half_lat], [b["lon"] - half_lon, b["lat"] + half_lat]],
+        "title": f"{b['name']} · critical building · {b['zone']}",
+        "line1": f"Uses about {b['load_kw']} kW. Backup: {b['backup'].lower()}"
+                 + (f", {b['backup_hours']} h" if b["backup_hours"] else ""),
+        "line2": "Protected last: never cut off.",
     } for b in simulator.critical_buildings()]
 
+    def dots(data, radius_m, min_px, max_px, color, pickable=False):
+        """A layer of round dots. Rings are drawn as a slightly bigger dot underneath."""
+        return pdk.Layer("ScatterplotLayer", data, get_position=["lon", "lat"], get_fill_color=color,
+                         get_radius=radius_m, radius_min_pixels=min_px, radius_max_pixels=max_px,
+                         pickable=pickable)
+
     layers = [
+        # Zones: lightly shaded, with their name and stress in the corner
         pdk.Layer("PolygonLayer", zone_rows, get_polygon="polygon", get_fill_color="fill",
                   get_line_color=ink + [90], line_width_min_pixels=1, pickable=True),
         pdk.Layer("TextLayer", zone_rows, get_position=["lon", "lat"], get_text="label",
                   get_color=ink, get_size=14, font_weight=600, get_text_anchor="'start'",
                   get_alignment_baseline="'top'", get_pixel_offset=[6, 6]),
-        pdk.Layer("ScatterplotLayer", home_rows, get_position=["lon", "lat"], get_fill_color="color",
-                  get_radius="radius", radius_min_pixels=4, radius_max_pixels=10, stroked=True,
-                  get_line_color=[255, 255, 255], line_width_min_pixels=1, pickable=True),
-        # Critical buildings: purple with a thick white ring, and their name next to them
-        pdk.Layer("ScatterplotLayer", building_rows, get_position=["lon", "lat"], get_fill_color=[130, 60, 200],
-                  get_radius=60, radius_min_pixels=8, radius_max_pixels=14, stroked=True, get_line_color=[255, 255, 255],
-                  line_width_min_pixels=3, pickable=True),
+        # Critical buildings: larger squares with their name beside them
+        pdk.Layer("PolygonLayer", building_rows, get_polygon="square", get_fill_color=BUILDING_COLOR,
+                  get_line_color=[255, 255, 255], line_width_min_pixels=2, pickable=True),
         pdk.Layer("TextLayer", building_rows, get_position=["lon", "lat"], get_text="label", get_color=ink,
-                  get_size=12, get_text_anchor="'start'", get_pixel_offset=[14, 0]),
+                  get_size=12, font_weight=600, get_text_anchor="'start'", get_pixel_offset=[14, 0]),
+        # Homes: rings first (thick purple for medical, orange for vulnerable), then the dot on top
+        dots(medical_rows, 60, 11, 16, "ring"),
+        dots(vulnerable_rows, 48, 9, 13, "ring"),
+        dots(home_rows, 32, 6, 9, "color", pickable=True),
     ]
     st.pydeck_chart(pdk.Deck(
         layers=layers,
         initial_view_state=pdk.ViewState(latitude=33.7885, longitude=-118.2630, zoom=14.6),
         map_style="dark" if dark else "light",
-        tooltip={"html": "{tip}", "style": {"maxWidth": "320px", "fontSize": "13px"}},
-    ), height=460)
-    st.caption("🔴 Needs dispatcher · 🟠 Watch · 🔵 Can wait · 🟢 Normal · 🟣 Critical building "
-               "(bigger dots are medical homes). Zones turn amber when busy and red when strained. "
-               "Hover anything for details.")
+        # Hover box: the formatting lives here; each row just supplies plain title/line1/line2
+        tooltip={"html": "<b>{title}</b><br/>{line1}<br/>{line2}",
+                 "style": {"maxWidth": "320px", "fontSize": "13px"}},
+    ), height=480)
+
+    # Legend: what every color and shape means
+    def swatch(fill, ring=None, ring_px=0, square=False):
+        css = f"rgb({fill[0]},{fill[1]},{fill[2]})"
+        border = f"{ring_px}px solid rgb({ring[0]},{ring[1]},{ring[2]})" if ring else "1px solid transparent"
+        shape = "2px" if square else "50%"
+        return (f'<span style="display:inline-block;width:12px;height:12px;background:{css};'
+                f'border:{border};border-radius:{shape};vertical-align:middle;margin:0 6px 0 14px"></span>')
+    grey = [150, 150, 150]
+    st.html(
+        '<div style="font-size:13px;line-height:2;opacity:.9">'
+        "<b>Battery (dot color):</b>"
+        f"{swatch(STATE_COLORS[rules.NORMAL])}Normal"
+        f"{swatch(STATE_COLORS[rules.WATCH])}Watch"
+        f"{swatch(STATE_COLORS[rules.CAN_WAIT])}Can wait"
+        f"{swatch(STATE_COLORS[rules.NEEDS_DISPATCHER])}Needs dispatcher<br/>"
+        "<b>Household (ring):</b>"
+        f"{swatch(grey)}Regular (no ring)"
+        f"{swatch(grey, RING_COLORS['vulnerable'], 2)}Vulnerable"
+        f"{swatch(grey, RING_COLORS['medical'], 4)}Medical (thick)"
+        f"{swatch(BUILDING_COLOR, [255, 255, 255], 2, square=True)}Critical building<br/>"
+        "<b>Zone (shading):</b>"
+        f"{swatch([120, 140, 170], square=True)}OK"
+        f"{swatch([245, 170, 30], square=True)}Busy (70%+ of capacity)"
+        f"{swatch([220, 50, 50], square=True)}Strained (80%+)"
+        '<span style="margin-left:14px;opacity:.7">Hover anything on the map for details.</span>'
+        "</div>"
+    )
 
     # --- Top numbers: what the rules say ---
     counts = results["category"].value_counts()
