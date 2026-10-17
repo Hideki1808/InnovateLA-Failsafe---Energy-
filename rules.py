@@ -450,9 +450,8 @@ def temp(celsius):
 
 
 def event_label():
-    """The country's stress event with its icon, e.g. '🌡️ Heat wave' or '🥶 Cold snap'."""
-    event = simulator.COUNTRY["stress_event"]
-    return f"{event['icon']} {event['name']}"
+    """The country's stress event, e.g. 'Heat wave' or 'Cold snap'."""
+    return simulator.COUNTRY["stress_event"]["name"]
 
 
 def voltage_band():

@@ -13,18 +13,19 @@ import pydeck as pdk
 import streamlit as st
 
 import rules
+import map_gestures
 import simulator
 import style
 
 st.set_page_config(page_title="Fleet Dispatcher", layout="wide")
 started = time.time()   # used by Play to keep a steady pace
 
-# A colored dot for each category, so the table is easy to scan
+# How each category is written in the table
 ICONS = {
-    rules.NEEDS_DISPATCHER: "🔴 Needs dispatcher",
-    rules.WATCH: "🟡 Watch",
-    rules.CAN_WAIT: "🔵 Can wait",
-    rules.NORMAL: "🟢 Normal",
+    rules.NEEDS_DISPATCHER: "Needs dispatcher",
+    rules.WATCH: "Watch",
+    rules.CAN_WAIT: "Can wait",
+    rules.NORMAL: "Normal",
 }
 # Most urgent first when sorting the table
 SEVERITY = {rules.NEEDS_DISPATCHER: 0, rules.WATCH: 1, rules.CAN_WAIT: 2, rules.NORMAL: 3}
@@ -151,22 +152,22 @@ with live_tab:
         if r["category"] == rules.NEEDS_DISPATCHER:
             why = (f"silent, probably {r['silent_guess']}" if pd.notna(r["silent_guess"])
                    else r["reason"].split(".")[0].lower())
-            events.append((f"{r['battery_id']}:{r['battery_status']}", f"🔴 {who} needs the dispatcher: {why}."))
+            events.append((f"{r['battery_id']}:{r['battery_status']}", f"{who} needs the dispatcher: {why}."))
         elif pd.notna(r["silent_guess"]):
-            events.append((f"{r['battery_id']}:silent", f"📵 {who} went silent. Best guess: {r['silent_guess']}."))
+            events.append((f"{r['battery_id']}:silent", f"{who} went silent. Best guess: {r['silent_guess']}."))
     for zone, stress in current.groupby("zone")["zone_stress"].first().items():
         if stress >= rules.STRAINED_GRID:
-            events.append((f"strained:{zone}", f"{EVENT['icon']} {zone} is strained ({stress:.0f}% of capacity). "
+            events.append((f"strained:{zone}", f"{EVENT['name']}: {zone} is strained ({stress:.0f}% of capacity). "
                                                f"See its plan in the Response ladder tab."))
     new_events = [(k, msg) for k, msg in events if k not in st.session_state.seen]
     st.session_state.seen |= {k for k, _ in events}
 
     # One row: Play / Step / Reset, the time slider, speed, and auto-pause
     c1, c2, c3, c_slider, c4, c5 = st.columns([1.1, 1, 1.1, 3.4, 2.6, 1.8], vertical_alignment="center")
-    c1.button("⏸ Pause" if st.session_state.playing else "▶ Play", on_click=toggle_play,
+    c1.button("Pause" if st.session_state.playing else "Play", on_click=toggle_play,
               type="primary", width="stretch")
-    c2.button("⏭ Step", on_click=step_forward, width="stretch", help="Move forward 15 minutes")
-    c3.button("⏮ Reset", on_click=jump_to, args=(DEMO_START,), width="stretch",
+    c2.button("Step", on_click=step_forward, width="stretch", help="Move forward 15 minutes")
+    c3.button("Reset", on_click=jump_to, args=(DEMO_START,), width="stretch",
               help=f"Back to the start, before the {EVENT['name'].lower()}")
     speed = c4.segmented_control("Speed", list(SPEEDS), default="Normal", required=True,
                                  label_visibility="collapsed")
@@ -189,7 +190,7 @@ with live_tab:
     # the map below never shifts position. A shift would make Streamlit rebuild the map.
     pause_slot = st.empty()
     if st.session_state.pause_note:
-        pause_slot.info(f"⏸ **Paused at {now[11:]}.** {st.session_state.pause_note} Press Play to continue.")
+        pause_slot.info(f"**Paused at {rules.clock(now)}.** {st.session_state.pause_note} Press Play to continue.")
 
     # --- Key numbers across the top: very large number, short caption underneath ---
     # Coral only when the number is a warning sign; everything else stays ink-black.
@@ -282,7 +283,7 @@ with live_tab:
                 # Critical buildings: larger squares with their name beside them
             pdk.Layer("PolygonLayer", building_rows, get_polygon="square", get_fill_color=BUILDING_COLOR,
                       get_line_color=[255, 255, 255], line_width_min_pixels=2, pickable=True),
-            pdk.Layer("TextLayer", character_set="'auto'", data=building_rows, get_position=["lon", "lat"], get_text="label", get_color=ink,
+            pdk.Layer("TextLayer", character_set="'auto'", font_family=f"'{style.FONT}'", data=building_rows, get_position=["lon", "lat"], get_text="label", get_color=ink,
                       get_size=14, font_weight=600, get_text_anchor="'start'", get_pixel_offset=[14, 0]),
         ]
         # (the pulsing rings around "Needs dispatcher" homes are drawn here, by draw_map)
@@ -292,7 +293,7 @@ with live_tab:
             dots(vulnerable_rows, 46, 9, 12, "ring"),
             dots(home_rows, 32, 7, 10, "color", pickable=True),
             # Zone names last, on a white tag, so no dot ever covers them
-            pdk.Layer("TextLayer", character_set="'auto'", data=zone_rows, get_position=["lon", "lat"], get_text="label",
+            pdk.Layer("TextLayer", character_set="'auto'", font_family=f"'{style.FONT}'", data=zone_rows, get_position=["lon", "lat"], get_text="label",
                       get_color=ink, get_size=16, font_weight=700, get_text_anchor="'start'",
                       get_alignment_baseline="'top'", get_pixel_offset=[6, 6],
                       background=True, get_background_color=[255, 255, 255, 220], background_padding=[4, 2]),
@@ -301,13 +302,14 @@ with live_tab:
                              zoom=COUNTRY["map"]["zoom"])
         # Hover box: the formatting lives here; each row just supplies plain title/line1/line2
         tooltip = {"html": "<b>{title}</b><br/>{line1}<br/>{line2}",
-                   "style": {"maxWidth": "340px", "fontSize": "15px", "backgroundColor": "#ffffff",
+                   "style": {"maxWidth": "340px", "fontSize": "15px", "fontFamily": style.FONT, "backgroundColor": "#ffffff",
                              "color": style.INK, "borderRadius": "12px", "padding": "10px 12px",
                              "boxShadow": "0 4px 18px rgba(0,0,0,.12)"}}
         draw_map(below, above, urgent_rows, view, tooltip)
 
         # Legend: what every color and shape means
         st.html(style.legend())
+        map_gestures.install()   # two-finger slide moves the map, pinch zooms
 
     with right, st.container(key="panel_side"):
         # --- Dispatcher summary: three plain-English lines, written by the rules ---
@@ -377,7 +379,7 @@ with live_tab:
                 for i, plan in enumerate(plans):
                     zone = plan["zone"]
                     approved_kw = sum(s["kw"] for s in plan["steps"] if (now, zone, s["number"]) in st.session_state.approved)
-                    label = f"🔥 {zone}: {plan['stress']:.0f}%, needs {plan['needed_kw']:.0f} kW"
+                    label = f"{zone}: {plan['stress']:.0f}%, needs {plan['needed_kw']:.0f} kW"
                     with st.expander(label, expanded=(i == 0)):
                         st.markdown(f"Approved so far: **{approved_kw:.0f} of {plan['needed_kw']:.0f} kW** → zone "
                                     f"≈**{rules.stress_after(plan['load_kw'], plan['capacity_kw'], approved_kw):.0f}%**")
@@ -402,7 +404,7 @@ with live_tab:
                                     st.write(", ".join(s["targets"]))
 
                                 if done:
-                                    st.success("Approved. Command sent (simulated).", icon="✅")
+                                    st.success("Approved. Command sent (simulated).")
                                 elif not s["needed"]:
                                     st.caption("Not needed: the steps above already free enough.")
                                 elif not earlier_done:

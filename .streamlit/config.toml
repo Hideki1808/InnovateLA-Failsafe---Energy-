@@ -5,7 +5,11 @@
 
 [theme]
 base = "light"
-font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+# Fonts picked to match the reference look (closest free Google Fonts):
+#   body text and big numbers: Inter Tight, a tight Helvetica-style grotesk
+#   headings and the title:    Outfit, a geometric rounded sans
+font = "Inter Tight:https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800&display=swap"
+headingFont = "Outfit:https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&display=swap"
 baseFontSize = 18                    # readable from the back of the room
 baseRadius = "16px"                  # soft rounded corners on panels and widgets
 buttonRadius = "999px"               # pill-shaped buttons

@@ -63,7 +63,6 @@ daytime_kw = 1.5                         # pool pump, noon - 6 pm
 
 [countries.us_texas.stress_event]        # what strains the grid in the demo (approx.)
 name = "Heat wave"
-icon = "🌡️"
 start_hour = 14                          # 2 pm
 end_hour = 20                            # 8 pm
 temperature_change_c = 8                 # degrees warmer than a normal day
@@ -176,7 +175,6 @@ daytime_kw = 1.0                         # heat-pump water heater, noon - 6 pm
 
 [countries.de_munich.stress_event]        # winter is when German grids are tightest (approx.)
 name = "Cold snap"
-icon = "🥶"
 start_hour = 14
 end_hour = 20
 temperature_change_c = -14               # degrees colder than a normal winter day

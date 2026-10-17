@@ -17,6 +17,7 @@ import rules
 # Colors (keep in step with .streamlit/config.toml)
 # ---------------------------------------------------------------------------
 CORAL = "#e8453c"        # the accent, and "Needs dispatcher"
+FONT = "Inter Tight, Helvetica Neue, Arial, sans-serif"   # same as the theme's body font
 INK = "#1c1c1e"          # text
 MUTED = "#6f6b67"        # captions and labels
 PAGE = "#f2f1ef"         # page background
@@ -57,7 +58,8 @@ CSS = f"""
           color: {MUTED}; margin: 0 0 .5rem 0; }}
 
   /* The big coral title */
-  .brand {{ font-size: 2.2rem; font-weight: 800; color: {CORAL}; letter-spacing: -.035em;
+  .brand {{ font-family: "Outfit", "Inter Tight", sans-serif; font-size: 2.4rem; font-weight: 700;
+            color: {CORAL}; letter-spacing: -.03em;
             line-height: 1.05; margin: 0; }}
 
   /* Key numbers: very large number, short caption underneath */
@@ -94,6 +96,9 @@ CSS = f"""
   [data-baseweb="tab-highlight"] {{ background-color: {CORAL} !important; }}
   [data-baseweb="tab-border"] {{ background-color: {LINE} !important; }}
   button[role="tab"] p {{ font-size: 1rem; font-weight: 600; }}
+
+  /* The map-gesture helper frame (map_gestures.py) does its work invisibly */
+  .st-key-gesture_helper {{ display: none !important; }}
 
   /* Expanders inside panels: no heavy box */
   [data-testid="stExpander"] details {{ border-color: {LINE}; border-radius: 14px; }}
