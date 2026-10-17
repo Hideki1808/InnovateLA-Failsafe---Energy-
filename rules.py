@@ -179,7 +179,7 @@ def classify(row, history, fleet_kw_by_time):
     # Rule 3 - Running HOT. Hot batteries can trip. At a critical home that would cut
     # backup power where it matters most, so a person should step in before it happens.
     if row["inverter_temp_c"] >= HOT_C:
-        reason = f"Inverter is {row['inverter_temp_c']:.0f}°C (limit {HOT_C}°C) and may trip soon."
+        reason = f"Inverter is {temp(row['inverter_temp_c'])} (limit {temp(HOT_C)}) and may trip soon."
         if critical:
             return NEEDS_DISPATCHER, reason + f" Critical home ({home}): consider easing its load.", None
         return WATCH, reason, None
@@ -348,7 +348,7 @@ def relief_plan(readings, at_time, zone):
     shed4, step4_kw = shed_list(rows, gap, extra, "regular")
     # ...then whole street blocks of the zone's other customers (homes without our
     # batteries), about BLOCK_KW each, until the gap is covered.
-    heat = rows[0]["heat_wave"]
+    heat = rows[0]["stress_event"]                     # True while the heat wave / cold snap is on
     buildings_kw = sum(simulator.building_load_kw(b, heat) for b in simulator.critical_buildings()
                        if b["zone"] == zone)
     other_kw = load - sum(r["from_grid_kw"] for r in rows) - buildings_kw
@@ -442,6 +442,19 @@ def clock(t):
     return f"{h % 12 or 12}{'' if m == '00' else ':' + m} {'AM' if h < 12 else 'PM'}"
 
 
+def temp(celsius):
+    """A temperature in the country's unit: 70 -> '70°C' or '158°F'."""
+    if simulator.COUNTRY["temperature_unit"] == "F":
+        return f"{celsius * 9 / 5 + 32:.0f}°F"
+    return f"{celsius:.0f}°C"
+
+
+def event_label():
+    """The country's stress event with its icon, e.g. '🌡️ Heat wave' or '🥶 Cold snap'."""
+    event = simulator.COUNTRY["stress_event"]
+    return f"{event['icon']} {event['name']}"
+
+
 def voltage_band():
     """(low, high) normal home voltage for the active country, e.g. 240 V ±5%."""
     nominal = simulator.COUNTRY["nominal_voltage"]
@@ -524,7 +537,7 @@ def summary(readings, at_time, results, approved_steps=()):
 
     if strained:
         listed = ", ".join(f"{z} ({stress_at[z][at_time]:.0f}% of capacity)" for z in strained)
-        outlook = f"**{plural(len(strained), 'zone')} strained now:** {listed}."
+        outlook = f"**{event_label()}: {plural(len(strained), 'zone')} strained now:** {listed}."
         eases = next((t for t in times[i + 1:]
                       if all(stress_at[z][t] < STRAINED_GRID for z in stress_at)), None)
         if coming:
@@ -534,7 +547,8 @@ def summary(readings, at_time, results, approved_steps=()):
     elif coming:
         z, t = min(coming.items(), key=lambda kv: kv[1])
         peak = max(stress_at[z][t2] for t2 in ahead)
-        outlook = f"**{z} expected to be strained at {clock(t)}** (up to {peak:.0f}% of capacity)."
+        outlook = (f"**{event_label()} expected: {z} strained from {clock(t)}** "
+                   f"(up to {peak:.0f}% of capacity).")
         if len(coming) > 1:
             outlook += f" {len(coming) - 1} more zone{'s' if len(coming) > 2 else ''} later."
     else:

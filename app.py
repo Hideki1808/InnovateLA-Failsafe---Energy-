@@ -77,12 +77,13 @@ data = pd.DataFrame(readings)
 live_tab, earn_tab = st.tabs(["⚡ Live dispatch", "💰 Normal day earnings"])
 
 # ===========================================================================
-# Tab 1: live dispatch (the demo day with the heat wave)
+# Tab 1: live dispatch (the demo day with the country's stress event)
 # ===========================================================================
 with live_tab:
     # --- Playback: run the day forward for the live demo ---
     times = simulator.all_times(readings)
-    DEMO_START = "2026-10-17 12:00"        # calm before the heat wave
+    DEMO_START = "2026-10-17 12:00"        # calm before the stress event
+    EVENT = COUNTRY["stress_event"]          # heat wave, cold snap... (from the config file)
     SPEEDS = {"Slow": 2.0, "Normal": 1.0, "Fast": 0.4}   # seconds per 15-minute step
 
     st.session_state.setdefault("now", DEMO_START)
@@ -130,7 +131,7 @@ with live_tab:
             events.append((f"{r['battery_id']}:silent", f"📵 {who} went silent. Best guess: {r['silent_guess']}."))
     for zone, stress in current.groupby("zone")["zone_stress"].first().items():
         if stress >= rules.STRAINED_GRID:
-            events.append((f"strained:{zone}", f"🌡️ {zone} is strained ({stress:.0f}% of capacity). "
+            events.append((f"strained:{zone}", f"{EVENT['icon']} {zone} is strained ({stress:.0f}% of capacity). "
                                                f"See its plan in the Response ladder tab."))
     new_events = [(k, msg) for k, msg in events if k not in st.session_state.seen]
     st.session_state.seen |= {k for k, _ in events}
@@ -141,7 +142,7 @@ with live_tab:
               type="primary", width="stretch")
     c2.button("⏭ Step", on_click=step_forward, width="stretch", help="Move forward 15 minutes")
     c3.button("⏮ Reset", on_click=jump_to, args=(DEMO_START,), width="stretch",
-              help="Back to 12:00, before the heat wave")
+              help=f"Back to the start, before the {EVENT['name'].lower()}")
     speed = c4.segmented_control("Speed", list(SPEEDS), default="Normal", required=True,
                                  label_visibility="collapsed")
     pause_on_events = c5.checkbox("Auto-pause", value=True,
@@ -171,7 +172,10 @@ with live_tab:
     strained_zones = int((zone_stress_now >= rules.STRAINED_GRID).sum())
     worst_zone = zone_stress_now.idxmax()
     k = st.columns(6)
-    k[0].metric("🕒 Time", rules.clock(now))
+    # Under the clock: the stress event's name while it's happening
+    event_on = bool(current.iloc[0]["stress_event"])
+    k[0].metric("🕒 Time", rules.clock(now), rules.event_label() if event_on else None,
+                delta_color="off", delta_arrow="off")
     k[1].metric(ICONS[rules.NEEDS_DISPATCHER], int(counts.get(rules.NEEDS_DISPATCHER, 0)))
     k[2].metric(ICONS[rules.WATCH], int(counts.get(rules.WATCH, 0)))
     k[3].metric(ICONS[rules.CAN_WAIT], int(counts.get(rules.CAN_WAIT, 0)))
@@ -453,7 +457,9 @@ with live_tab:
             x="clock", y="charge_pct",
         )
         st.altair_chart(chart + marker, width="stretch")
-        st.caption("Batteries fill up on cheap midday solar, then drain during the 2–8 pm heat wave.")
+        st.caption(f"Batteries fill up on cheap midday solar, then drain during the "
+                   f"{EVENT['name'].lower()} ({rules.clock(f'2026-10-17 {EVENT['start_hour']:02d}:00')}–"
+                   f"{rules.clock(f'2026-10-17 {EVENT['end_hour']:02d}:00')}).")
 
         # --- Table: every battery right now, most urgent first ---
         st.subheader(f"All batteries at {now[11:]}")
@@ -463,6 +469,8 @@ with live_tab:
         table["category"] = table["category"].map(ICONS)
         table["battery_status"] = table["battery_status"].fillna("no signal")
         table["silent_guess"] = table["silent_guess"].fillna("")
+        if COUNTRY["temperature_unit"] == "F":     # show temperatures the way this country does
+            table["inverter_temp_c"] = (table["inverter_temp_c"] * 9 / 5 + 32).round(1)
         table = table[[
             "category", "battery_id", "reason", "silent_guess", "household_type", "priority", "zone",
             "battery_status", "charge_pct", "battery_kw", "inverter_temp_c", "home_usage_kw", "from_grid_kw",
@@ -477,7 +485,7 @@ with live_tab:
             "battery_status": "Status",
             "charge_pct": "Charge %",
             "battery_kw": "Battery kW",
-            "inverter_temp_c": "Temp °C",
+            "inverter_temp_c": f"Temp °{COUNTRY['temperature_unit']}",
             "home_usage_kw": "Home uses kW",
             "from_grid_kw": "From grid kW",
         })
@@ -516,7 +524,7 @@ with live_tab:
 
 
 # ===========================================================================
-# Tab 2: how the fleet earns money on a normal day (no heat wave, no problems)
+# Tab 2: how the fleet earns money on a normal day (no stress event, no problems)
 # ===========================================================================
 CHARGE_COLOR = "#3987e5"      # blue: taking power in
 DISCHARGE_COLOR = "#eb6834"   # orange: giving power out
@@ -646,9 +654,10 @@ with earn_tab:
     st.caption(
         f"Simulated numbers, kept simple: {batteries} batteries of {simulator.BATTERY_CAPACITY_KWH:.0f} kWh, "
         f"no energy lost when charging, and each battery ends the day about where it started. "
-        f"For comparison, on the heat-wave demo day the same fleet earned "
+        f"For comparison, on the demo day with the {COUNTRY['stress_event']['name'].lower()} "
+        f"the same fleet earned "
         + in_text(f"{money(demo_day_earnings(country_id), 0)}, because peak prices hit "
-                  f"{money(prices['heat_wave_peak'])} / kWh.")
+                  f"{money(COUNTRY['stress_event']['peak_price'])} / kWh.")
         + " All prices are approximate (see config/countries.toml)."
     )
 

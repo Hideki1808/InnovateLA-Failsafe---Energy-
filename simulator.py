@@ -8,7 +8,8 @@ What it creates:
       1. A battery that goes SILENT  (stops talking, but is still working fine)
       2. A battery that TRIPS        (overheats, shuts itself off, says "tripped")
       3. A battery that BREAKS       (stops talking AND stops helping the home)
-      4. A HEAT WAVE in the afternoon (everyone's AC kicks on, the grid strains)
+      4. A STRESS EVENT in the afternoon that strains the grid: a heat wave in Texas
+         (everyone's AC), a cold snap in Germany (everyone's heating). See the config file.
 
 How to tell silent vs broken (this is the trick for the demo):
   Every home also has a utility meter that keeps reporting even when the battery
@@ -114,13 +115,13 @@ SILENT_BATTERY = "BAT-007"
 SILENT_AT_HOUR = 13      # stops reporting at 1 pm
 
 TRIPPED_BATTERY = "BAT-023"
-TRIP_AT_HOUR = 16        # overheats during the heat wave and trips at 4 pm
+TRIP_AT_HOUR = 16        # overheats during the stress event and trips at 4 pm
+TRIP_OVERHEAT_C = 72     # how hot its inverter gets in the hour before it trips
 
 BROKEN_BATTERY = "BAT-031"
 BROKEN_AT_HOUR = 15      # dies at 3 pm
 
-HEAT_WAVE_START_HOUR = 14  # 2 pm
-HEAT_WAVE_END_HOUR = 20    # 8 pm
+INVERTER_FLOOR_C = 20    # batteries sit in garages/utility rooms: never colder than this
 
 
 # ---------------------------------------------------------------------------
@@ -233,14 +234,16 @@ def critical_buildings():
     return buildings
 
 
-def building_load_kw(building, heat_wave):
-    """A critical building's power use. Air conditioning adds a quarter in a heat wave."""
-    return building["load_kw"] * (1.25 if heat_wave else 1.0)
+def building_load_kw(building, stress_event):
+    """A critical building's power use. It goes up during the stress event (cooling in a
+    heat wave, heating in a cold snap) by the country's buildings_factor."""
+    factor = COUNTRY["stress_event"]["buildings_factor"] if stress_event else 1.0
+    return building["load_kw"] * factor
 
 
 def other_customers_kw(zone, hour):
     """Power used in the zone by customers outside our fleet (homes without
-    batteries, shops). Low at night, highest in the evening, more in a heat wave."""
+    batteries, shops). Low at night, highest in the evening, more during the stress event."""
     if hour < 6:
         share = 0.45
     elif hour < 17:
@@ -249,32 +252,35 @@ def other_customers_kw(zone, hour):
         share = 1.0
     else:
         share = 0.6
-    if is_heat_wave(hour):
-        share *= 1.5                          # everyone's air conditioning
+    if is_stress_event(hour):
+        share *= COUNTRY["stress_event"]["other_customers_factor"]   # everyone's AC / heating
     return ZONES[zone]["other_customers_kw"] * share
 
 
 # ---------------------------------------------------------------------------
 # The world around the batteries (prices, grid strain, weather)
 # ---------------------------------------------------------------------------
-# Set by simulate(): on an ordinary day there's no heat wave
+# Set by simulate(): on an ordinary day there's no stress event
 _ordinary_day = False
 
 
-def is_heat_wave(hour):
+def is_stress_event(hour):
+    """Is the country's stress event (heat wave, cold snap...) happening at this hour?"""
     if _ordinary_day:
         return False
-    return HEAT_WAVE_START_HOUR <= hour < HEAT_WAVE_END_HOUR
+    event = COUNTRY["stress_event"]
+    return event["start_hour"] <= hour < event["end_hour"]
 
 
 def electricity_price(hour):
     """Price per kWh in the country's currency (from the config file).
     Cheap midday (solar), expensive in the evening."""
     p = COUNTRY["prices"]
-    if is_heat_wave(hour) and hour >= 16:
-        return p["heat_wave_peak"]            # heat wave peak: very expensive
-    if is_heat_wave(hour):
-        return p["heat_wave"]
+    event = COUNTRY["stress_event"]
+    if is_stress_event(hour) and hour >= event["start_hour"] + 2:
+        return event["peak_price"]            # stress event peak: very expensive
+    if is_stress_event(hour):
+        return event["price"]
     if 10 <= hour < 15:
         return p["cheap_solar"]               # lots of solar, cheap
     if 17 <= hour < 21:
@@ -286,8 +292,8 @@ def grid_stress(hour):
     """The utility's citywide alert level, 0 (relaxed) to 100 (about to shed load).
     Batteries react to this signal on their own. Each zone's actual stress is worked
     out separately from what it's really drawing (see zone_stress in the readings)."""
-    if is_heat_wave(hour):
-        return 85 + (hour - HEAT_WAVE_START_HOUR) * 2   # climbs 85 -> 95
+    if is_stress_event(hour):
+        return 85 + (hour - COUNTRY["stress_event"]["start_hour"]) * 2   # climbs 85 -> 95
     if 17 <= hour < 21:
         return 60
     if 7 <= hour < 10:
@@ -298,8 +304,8 @@ def grid_stress(hour):
 def outdoor_temp_c(hour):
     t = COUNTRY["temperature_c"]
     base = t["night"] + t["daily_rise"] * max(0, 1 - abs(hour - 15) / 9)   # warmest around 3 pm
-    if is_heat_wave(hour):
-        base += t["heat_wave_extra"]
+    if is_stress_event(hour):
+        base += COUNTRY["stress_event"]["temperature_change_c"]   # hotter or colder
     return base
 
 
@@ -316,18 +322,18 @@ def home_usage_kw(home, hour, rng):
     if home["household_type"] == "vulnerable":
         kw += 0.4                             # someone home all day: fans, medicine fridge
     if home["has_flexible_load"]:
-        kw += flexible_usage_kw(home, hour, heat_wave_part=False)   # EV overnight, daytime load
-    if is_heat_wave(hour):
-        low, high = COUNTRY["home_load_kw"]["air_conditioning_heat_wave"]
-        kw += rng.uniform(low, high)          # air conditioning / fans
+        kw += flexible_usage_kw(home, hour, event_part=False)   # EV overnight, daytime load
+    if is_stress_event(hour):
+        low, high = COUNTRY["stress_event"]["extra_home_load_kw"]
+        kw += rng.uniform(low, high)          # air conditioning (heat wave) or heating (cold snap)
     return kw + rng.uniform(-0.2, 0.2)
 
 
-def flexible_usage_kw(home, hour, heat_wave_part=True):
+def flexible_usage_kw(home, hour, event_part=True):
     """The part of a home's usage that could wait an hour or two without hurting anyone.
     Only homes with flexible load have it: EV charging overnight, a daytime load (pool
     pump in Texas, heat-pump water heater in Germany: see the config file), and a smart
-    thermostat that can let the house warm up a degree during a heat wave."""
+    thermostat that can let the house drift a degree during the stress event."""
     if not home["has_flexible_load"]:
         return 0.0
     flex = COUNTRY["flexible_load"]
@@ -336,8 +342,8 @@ def flexible_usage_kw(home, hour, heat_wave_part=True):
         kw += COUNTRY["home_load_kw"]["ev_charger"]   # EV charging
     if 12 <= hour < 18:
         kw += flex["daytime_kw"]                      # pool pump / water heater
-    if heat_wave_part and is_heat_wave(hour):
-        kw += flex["thermostat_nudge_kw"]             # thermostat nudge (part of the AC load)
+    if event_part and is_stress_event(hour):
+        kw += COUNTRY["stress_event"]["thermostat_nudge_kw"]   # thermostat nudge (part of AC/heating)
     return kw
 
 
@@ -348,7 +354,7 @@ def battery_plan_kw(hour, charge_pct):
     This is the "earn its keep on an ordinary day" part: buy cheap, use when expensive.
 
     Note: batteries follow their own schedule. They don't know when the grid is in
-    trouble, so they keep charging through 3 pm even if a heat wave has started.
+    trouble, so they keep charging through 3 pm even if the stress event has started.
     Pausing that is one of the dispatcher's relief steps.
     """
     if 10 <= hour < 15:
@@ -366,7 +372,7 @@ def battery_plan_kw(hour, charge_pct):
 def simulate(seed=SEED, ordinary_day=False):
     """Return a list of readings (one dict per battery per 15 minutes).
 
-    ordinary_day=True gives a calm day: no heat wave and no planted problems.
+    ordinary_day=True gives a calm day: no stress event and no planted problems.
     Used by the "Normal day earnings" tab.
     """
     global _ordinary_day
@@ -430,12 +436,14 @@ def _run_day(seed, ordinary_day):
             else:
                 charge[bid] = new_charge
 
-            # Inverter temperature: warms with heavy use and hot weather
-            target_temp = outdoor_temp_c(hour) + abs(battery_kw) * 2.0
+            # Inverter temperature: warms with heavy use and hot weather (indoors, so
+            # never colder than INVERTER_FLOOR_C even in a cold snap)
+            surroundings = max(outdoor_temp_c(hour), INVERTER_FLOOR_C)
+            target_temp = surroundings + abs(battery_kw) * 2.0
             if bid == tripped_id and hour >= TRIP_AT_HOUR - 1 and bid not in tripped:
-                target_temp += 25             # the hour before tripping, it runs hot
+                target_temp = TRIP_OVERHEAT_C    # the hour before tripping, it runs hot
             if bid in tripped:
-                target_temp = outdoor_temp_c(hour)
+                target_temp = surroundings
             temp[bid] += (target_temp - temp[bid]) * 0.5
 
             # --- what the utility meter sees (always reports) ---
@@ -481,7 +489,7 @@ def _run_day(seed, ordinary_day):
                 # The world
                 "price_per_kwh": price,
                 "grid_stress": stress,
-                "heat_wave": is_heat_wave(hour),
+                "stress_event": is_stress_event(hour),
                 # Money: discharging when it's pricey saves/earns; charging costs
                 "earnings": round(kwh * price, 3),     # in the country's currency
             })
@@ -492,7 +500,7 @@ def _run_day(seed, ordinary_day):
         step_rows = readings[-len(fleet):]
         for zone, info in ZONES.items():
             fleet_kw = sum(r["from_grid_kw"] for r in step_rows if r["zone"] == zone)
-            buildings_kw = sum(building_load_kw(b, is_heat_wave(hour)) for b in buildings if b["zone"] == zone)
+            buildings_kw = sum(building_load_kw(b, is_stress_event(hour)) for b in buildings if b["zone"] == zone)
             load = fleet_kw + buildings_kw + other_customers_kw(zone, hour)
             for r in step_rows:
                 if r["zone"] == zone:
@@ -555,7 +563,7 @@ if __name__ == "__main__":
                           f"usage={r['home_usage_kw']} kW, from grid={r['from_grid_kw']} kW")
             row = snapshot(data, t)[0]
             print(f"  grid stress={row['grid_stress']}, price={cur}{row['price_per_kwh']}/kWh, "
-                  f"heat wave={row['heat_wave']}\n")
+                  f"{COUNTRY['stress_event']['name'].lower()}={row['stress_event']}\n")
 
         totals = earnings_by_battery(data)
         print(f"Whole fleet earned {cur}{sum(totals.values()):.2f} today "
