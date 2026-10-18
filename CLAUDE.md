@@ -69,6 +69,8 @@ Checkpoint before starting: commit and tag `before-crisis-mode` (on GitHub).
 Replace the single scripted stress event with crises that depend on the time of year:
 - **Month selector** (done for weather: the outdoor temperature follows the month's
   real typical day). Still to do: load and crisis odds follow the month too.
+- (crisis.py now covers seasonal chances, forecastable vs. sudden, severity and a
+  first wildfire index; next: show it in the dashboard and make it affect the grid.)
 - **Seasonal crisis chances**: each country lists its crises and how likely each is per
   month (e.g. Texas: summer heat waves, winter freezes, hurricanes; Munich: winter cold
   snaps, summer storms). All numbers approximate.
@@ -139,6 +141,9 @@ Known gaps today (fix as part of the crisis-mode work):
 - fetch_data.py: the ONLY file that calls APIs. Run once before the demo:
   python fetch_data.py (weather, OSM critical buildings, USGS earthquakes per country)
 - data/: the fetched data (weather_*, buildings_*, earthquakes_* per country), committed to git
+- crisis.py: the six crisis types (heat wave, cold snap, windstorm, earthquake, wildfire,
+  grid attack): chance per country/month from the saved data (config fallback),
+  forecastable or not, severity 1-5, random pick and manual pick. Not shown in the app yet.
 - weather.py: typical day of weather for the chosen country and month: real from data/,
   or approximate monthly values from config/countries.toml if the file is missing or broken
 - .streamlit/config.toml: the theme (off-white page, white rounded panels, coral accent;

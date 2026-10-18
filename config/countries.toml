@@ -80,6 +80,10 @@ buildings_factor = 1.25                  # critical buildings' load goes up this
 price = 0.50                             # $ per kWh during the event
 peak_price = 1.20                        # from 4 pm until it ends (wholesale spikes can go far higher)
 
+[countries.us_texas.crisis]                # crisis mode settings (approx.)
+conflict_chance_per_month = 0.01          # chance of a conflict / grid attack in any month (small, fixed)
+earthquakes_per_year_if_no_data = 0.15     # FALLBACK only, if data/earthquakes_us_texas.json is missing
+
 [countries.us_texas.household_mix]       # how common each household type is (relative weights)
 regular = 7
 vulnerable = 2
@@ -194,6 +198,10 @@ other_customers_factor = 1.5
 buildings_factor = 1.2
 price = 0.55                             # € per kWh during the event
 peak_price = 0.80                        # from 16:00 until it ends
+
+[countries.de_munich.crisis]                # crisis mode settings (approx.)
+conflict_chance_per_month = 0.01          # chance of a conflict / grid attack in any month (small, fixed)
+earthquakes_per_year_if_no_data = 0.8     # FALLBACK only, if data/earthquakes_de_munich.json is missing
 
 [countries.de_munich.household_mix]
 regular = 7
