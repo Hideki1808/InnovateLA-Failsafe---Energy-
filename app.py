@@ -121,7 +121,7 @@ def draw_map(below, above, urgent_rows, view, tooltip):
                             # same key every time = update the map in place (also when switching
                             # country: it then moves to the new view, centred). It changes only after
                             # a click, to drop Streamlit's highlight of the clicked shape.
-                            height=470, key=f"fleet_map_{st.session_state.get('map_version', 0)}",
+                            height=540, key=f"fleet_map_{st.session_state.get('map_version', 0)}",
                             on_select="rerun", selection_mode="single-object")
     # Clicked a zone, or a home or building in it? Remember the zone and redraw the whole
     # page, so the side panel can list that zone's batteries. The map is then drawn fresh
@@ -239,7 +239,7 @@ def normal_day():
         {"clock": "19:00", "price": prices["evening_peak"], "text": f"Peak: {money(prices['evening_peak'])}"},
     ])
     price_labels = alt.Chart(labels).mark_text(dy=-12, fontSize=13, color=PRICE_COLOR).encode(x="clock", y="price", text="text")
-    st.altair_chart((price_line + price_labels).properties(height=170), width="stretch")
+    st.altair_chart(theme=None, altair_chart=style.chart_style(price_line + price_labels, 170), width="stretch")
 
     # --- Chart 2: what the batteries do about it ---
     st.html(style.label("2 · So batteries charge when it's cheap and discharge at the peak"))
@@ -255,7 +255,7 @@ def normal_day():
     # Keep every hour on the axis, even when the batteries are resting
     axis_keeper = alt.Chart(day).mark_rule(opacity=0).encode(x=x)
     zero = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color=PRICE_COLOR).encode(y="y")
-    st.altair_chart((axis_keeper + bars + zero).properties(height=170), width="stretch")
+    st.altair_chart(theme=None, altair_chart=style.chart_style(axis_keeper + bars + zero, 170), width="stretch")
     st.caption("Below the line: batteries buying power. Above: batteries powering their homes "
                "so the homes don't buy at peak prices.")
 
@@ -268,7 +268,7 @@ def normal_day():
         tooltip=[alt.Tooltip("clock", title="Time"),
                  alt.Tooltip("running_total", title=f"Total so far ({CUR})", format=",.2f")],
     )
-    st.altair_chart(money_line.properties(height=170), width="stretch")
+    st.altair_chart(theme=None, altair_chart=style.chart_style(money_line, 170), width="stretch")
 
     # --- The simple math ---
     st.html(style.label("The math"))
@@ -463,7 +463,7 @@ for _, r in results.iterrows():
     who = f"Home {int(r['battery_id'][4:])} ({r['household_type']})"
     if r["category"] == rules.NEEDS_DISPATCHER:
         why = (f"silent, probably {r['silent_guess']}" if pd.notna(r["silent_guess"])
-               else r["reason"].split(".")[0].lower())
+               else r["reason"][0].lower() + r["reason"].split(".")[0][1:])   # keep "°F" as is
         events.append((f"{r['battery_id']}:{r['battery_status']}", f"{who} needs the dispatcher: {why}."))
     elif pd.notna(r["silent_guess"]):
         events.append((f"{r['battery_id']}:silent", f"{who} went silent, probably {r['silent_guess']}."))
@@ -512,39 +512,25 @@ def changed(name, then=None):
 
 
 with st.container(key="panel_top"):
-    h_brand, h_play, h_time, h_crisis, h_gear = st.columns([2.7, 0.8, 3.4, 1.3, 0.5], vertical_alignment="center")
+    h_brand, h_play, h_time, h_menu, h_crisis, h_gear = st.columns([2.3, 0.75, 3.3, 1.05, 1.15, 0.42],
+                                                                    vertical_alignment="center")
     h_brand.html(style.brand("Home Battery Fleet", COUNTRY["region"].split(", ")[-1]))   # e.g. "Austin"
     h_play.button("Pause" if st.session_state.playing else "Play", on_click=toggle_play,
                   type="primary", width="stretch", icon=":material/pause:" if st.session_state.playing
                   else ":material/play_arrow:")
     h_time.select_slider("Time of day", options=times, key="now", label_visibility="collapsed",
                          format_func=lambda t: t[11:])   # show just "16:30"
-    if crisis_running:
-        h_crisis.button("End crisis", on_click=end_crisis, width="stretch",
-                        help="The crisis stops now and power comes back everywhere")
-    else:
-        h_crisis.button("Start crisis", on_click=start_crisis, width="stretch",
-                        help="Starts now, also while playing. Choose which crisis in the settings.")
 
-    # --- Settings: everything else, folded into the gear ---
-    with h_gear.popover("", icon=":material/settings:", help="Settings", width="stretch"):
-        st.html(style.label("Scenario"))
-        s1, s2 = st.columns(2)
-        s1.selectbox("Country", list(simulator.COUNTRIES), key=bind("country"),
-                     on_change=changed, args=("country", reset_demo),
-                     format_func=lambda c: simulator.COUNTRIES[c]["name"].split(" · ")[-1],
-                     help="Country numbers are approximate (config file)")
-        s2.selectbox("Month", range(1, 13), key=bind("month"), on_change=changed, args=("month", reset_demo),
-                     format_func=lambda m: weather.MONTHS[m - 1],
-                     help="Weather, crisis odds and the fleet follow the month")
-
+    # --- Crisis menu: which crisis, how bad, the seed, and the full blackout switch ---
+    choice_name = ("Random" if st.session_state.crisis_choice == "random"
+                   else crisis.TYPES[st.session_state.crisis_choice]["name"])
+    with h_menu.popover(choice_name, icon=":material/bolt:", help="Configure the crisis", width="stretch"):
         st.html(style.label("Crisis"))
-        s1, s2 = st.columns(2)
-        s1.selectbox("Type", ["random"] + list(crisis.TYPES), key=bind("crisis_choice"), disabled=crisis_running,
+        st.selectbox("Type", ["random"] + list(crisis.TYPES), key=bind("crisis_choice"), disabled=crisis_running,
                      on_change=changed, args=("crisis_choice",),
-                     format_func=lambda k: "Random (month's odds)" if k == "random" else crisis.TYPES[k]["name"],
+                     format_func=lambda k: "Random (this month's odds)" if k == "random" else crisis.TYPES[k]["name"],
                      help="Random: picked by this month's odds (it picks the severity too)")
-        s2.selectbox("Severity", range(1, 6), key=bind("crisis_severity"),
+        st.selectbox("Severity", range(1, 6), key=bind("crisis_severity"),
                      on_change=changed, args=("crisis_severity",),
                      disabled=crisis_running or st.session_state.crisis_choice == "random",
                      format_func=lambda s: f"{s} · {crisis.SEVERITY_NAMES[s]}")
@@ -557,7 +543,24 @@ with st.container(key="panel_top"):
         st.toggle("Force full blackout", key=bind("full_blackout"), on_change=changed,
                   args=("full_blackout", toggle_full_blackout),
                   disabled=not crisis_running, help="Cut grid power to every zone (start a crisis first)")
+    if crisis_running:
+        h_crisis.button("End crisis", on_click=end_crisis, width="stretch", icon=":material/stop_circle:",
+                        help="The crisis stops now and power comes back everywhere")
+    else:
+        h_crisis.button("Start crisis", on_click=start_crisis, width="stretch", icon=":material/warning:",
+                        help="Starts now, also while playing. Configure it in the menu on the left.")
 
+    # --- Settings: scenario, playback and display ---
+    with h_gear.popover("", icon=":material/settings:", help="Settings", width="stretch"):
+        st.html(style.label("Scenario"))
+        s1, s2 = st.columns(2)
+        s1.selectbox("Country", list(simulator.COUNTRIES), key=bind("country"),
+                     on_change=changed, args=("country", reset_demo),
+                     format_func=lambda c: simulator.COUNTRIES[c]["name"].split(" · ")[-1],
+                     help="Country numbers are approximate (config file)")
+        s2.selectbox("Month", range(1, 13), key=bind("month"), on_change=changed, args=("month", reset_demo),
+                     format_func=lambda m: weather.MONTHS[m - 1],
+                     help="Weather, crisis odds and the fleet follow the month")
         st.html(style.label("Playback"))
         s1, s2 = st.columns(2)
         s1.button("Step 15 min", on_click=step_forward, width="stretch", icon=":material/skip_next:")
@@ -567,10 +570,9 @@ with st.container(key="panel_top"):
         s1.selectbox("Speed", list(SPEEDS), key=bind("speed"), on_change=changed, args=("speed",))
         s2.toggle("Auto-pause", key=bind("auto_pause"), on_change=changed, args=("auto_pause",),
                   help="Stop playing on each new event")
-
         st.html(style.label("Display"))
         st.toggle("Map legend", key=bind("show_legend"), on_change=changed, args=("show_legend",))
-        st.toggle("Data tables (charge over the day, every battery)", key=bind("show_details"),
+        st.toggle("Data tables (every battery, whose power can wait)", key=bind("show_details"),
                   on_change=changed, args=("show_details",))
     speed = st.session_state.speed
     pause_on_events = st.session_state.auto_pause
@@ -589,7 +591,7 @@ row0 = current.iloc[0]
 left_parts = [f'<span class="time">{rules.clock(now)}</span>',
               f'<span class="muted">{rules.temp(row0["outdoor_temp_c"])}</span>']
 if row0["stress_event"] and not (the_crisis and hour_now >= the_crisis["triggered_at"]):
-    left_parts.append(style.tag(row0["event_name"], "amber"))
+    left_parts.append(style.tag(row0["event_name"], "warn"))
 if the_crisis and hour_now >= the_crisis["triggered_at"]:
     c = the_crisis
     if hour_now >= c.get("ended_at", 99) or hour_now >= c["end_hour"]:
@@ -598,10 +600,10 @@ if the_crisis and hour_now >= the_crisis["triggered_at"]:
         when = f'hits in {rules.hrs(c["start_hour"] - hour_now)} · pre-charging'
     else:
         when = f'{rules.hrs(hour_now - c["start_hour"])} since start'
-    left_parts.append(style.tag(c["name"], "red") + " " + style.severity_dots(c["severity"]))
+    left_parts.append(style.tag(c["name"], "crit") + " " + style.severity_dots(c["severity"]))
     left_parts.append(f'<span>{"Forecast" if c["forecastable"] else "No warning"} · {when}</span>')
     if any("full blackout" in o["cause"] for o in outages_now):
-        left_parts.append(style.tag("Full blackout", "dark"))
+        left_parts.append(style.tag("Full blackout", "solid"))
     left_parts.append(f'<span class="muted">seed {st.session_state.crisis_seed}</span>')
 fire_zones = current.groupby("zone")["zone_fire_index"].first()
 fire_index = int(fire_zones.max())
@@ -617,7 +619,7 @@ pause_slot = st.empty()
 if st.session_state.pause_note:
     pause_slot.info(f"**Paused at {rules.clock(now)}.** {st.session_state.pause_note}", icon=":material/pause_circle:")
 
-# --- Four metric cards ---
+# --- Four query-value tiles (drawn beside the map) ---
 on_battery = int(current["zone"].isin(dark_zones).sum())
 medical_risk = {x["battery_id"] for z in blackout for x in z["runtimes"] if x["household_type"] == "medical"
                 and (x["runs_out"] or x["hours"] is None or x["hours"] <= 0.01 or x["short_kw"] > 0.05)}
@@ -633,23 +635,23 @@ else:                                        # no outage: shortest backup if the
     shortest_label = "Shortest backup"
 dark_names = ", ".join(sorted(rules.zone_short(z) for z in dark_zones))
 medical_names = ", ".join(f"Home {int(b[4:])}" for b in sorted(medical_risk))
-st.html(style.metrics([
+tile_items = [
     ("Homes on battery", on_battery, "no grid power" if on_battery else "all on the grid",
-     "alarm" if on_battery else ""),
+     "crit" if on_battery else "ok"),
     ("Zones dark", f"{len(dark_zones)}/{len(simulator.ZONES)}", dark_names or "none",
-     "alarm" if dark_zones else ""),
-    ("Medical at risk", len(medical_risk), medical_names or "none", "alarm" if medical_risk else ""),
+     "crit" if dark_zones else "ok"),
+    ("Medical at risk", len(medical_risk), medical_names or "none", "crit" if medical_risk else "ok"),
     (shortest_label, rules.hrs(shortest["hours"]) if shortest else "-",
      f"Home {int(shortest['home_id'][5:])}" if shortest else "",
-     "alarm" if shortest and shortest["hours"] < 2 else "dark"),
-]))
-
+     "crit" if shortest and shortest["hours"] < 2 else "warn" if shortest and shortest["hours"] < 4 else "ok"),
+]
 # ===========================================================================
-# Big map on the left, tabs on the right
+# Big map on the left; tiles and next steps on the right
 # ===========================================================================
-left, right = st.columns([1.75, 1.25], gap="medium")
+left, right = st.columns([2.45, 1], gap="small")
 
 with left, st.container(key="panel_map"):
+    st.html(style.title("Fleet map", f"{len(current)} homes · {len(simulator.ZONES)} zones · click a dark zone for details"))
     # --- Map: zones lightly shaded by how strained they are, homes colored by category ---
     ink = style.rgb(style.INK)                 # label color on the light map
 
@@ -794,35 +796,81 @@ with left, st.container(key="panel_map"):
                          "color": style.INK, "borderRadius": "12px", "padding": "10px 12px",
                          "boxShadow": "0 4px 18px rgba(0,0,0,.12)"}}
     draw_map(below, above, urgent_rows, view, tooltip)
-    st.html('<div class="map-credit">Map data © OpenStreetMap contributors · © CARTO</div>')
+    # (the map shows its own credit in the corner: © CARTO, © OpenStreetMap contributors)
 
     # Legend: what every color and shape means
     if st.session_state.show_legend:
         st.html(style.legend(dark=bool(dark_zones), forecast=bool(forecast_out)))
     map_gestures.install()   # mouse wheel zooms; trackpad: two-finger slide moves, pinch zooms
 
-with right, st.container(key="panel_side"):
+with right:
+    # --- Four query-value tiles, colored by threshold ---
+    st.html(style.tiles(tile_items))
+
     # --- Next steps: the dispatcher's to-do list, a few short lines, most urgent first ---
-    approved_now = {(zone, n) for t, zone, n in st.session_state.approved if t == now}
-    dark_approved_now = {(zone, n) for zone, start, n in st.session_state.dark_approved
-                         if any(o["zone"] == zone and o["start"] == start for o in dark_now)}
-    todo, more = rules.next_steps(readings, now, results.to_dict("records"), approved_now,
-                                  blackout=blackout, dark_approved=dark_approved_now,
-                                  shutoff_approved=bool(fire_plan and fire_plan["zone"] in shut_off_now))
-    st.html(style.label("Next steps") + style.steps_list(todo, more))
+    with st.container(key="panel_steps"):
+        approved_now = {(zone, n) for t, zone, n in st.session_state.approved if t == now}
+        dark_approved_now = {(zone, n) for zone, start, n in st.session_state.dark_approved
+                             if any(o["zone"] == zone and o["start"] == start for o in dark_now)}
+        todo, more = rules.next_steps(readings, now, results.to_dict("records"), approved_now,
+                                      blackout=blackout, dark_approved=dark_approved_now,
+                                      shutoff_approved=bool(fire_plan and fire_plan["zone"] in shut_off_now))
+        st.html(style.title("Next steps", "most urgent first") + style.status_list(todo, more))
 
-    # A click on a dark zone on the map opens the Outage zone tab on that zone
-    if blackout:
-        names = [z["zone"] for z in blackout]
-        click = st.session_state.get("map_version", 0)
-        if click != st.session_state.get("click_applied"):        # a new click on the map
-            st.session_state.click_applied = click
-            if st.session_state.get("picked_zone") in names:
-                st.session_state.dark_zone_pick = st.session_state.picked_zone
-                st.session_state.side_tab = "Outage zone"
-        if st.session_state.get("dark_zone_pick") not in names:
-            st.session_state.dark_zone_pick = names[0]
+# A click on a dark zone on the map opens the Outage zone tab on that zone
+if blackout:
+    names = [z["zone"] for z in blackout]
+    click = st.session_state.get("map_version", 0)
+    if click != st.session_state.get("click_applied"):        # a new click on the map
+        st.session_state.click_applied = click
+        if st.session_state.get("picked_zone") in names:
+            st.session_state.dark_zone_pick = st.session_state.picked_zone
+            st.session_state.side_tab = "Outage zone"
+    if st.session_state.get("dark_zone_pick") not in names:
+        st.session_state.dark_zone_pick = names[0]
 
+# ===========================================================================
+# Timeseries: how the day is going so far (lines grow as Play runs)
+# ===========================================================================
+so_far = data[data["time"] <= now].copy()
+so_far["hour"] = so_far["time"].map(hour_of)
+hour_axis = alt.X("hour:Q", title=None, scale=alt.Scale(domain=[0, 24], nice=False),
+                  axis=alt.Axis(values=list(range(0, 25, 3)), labelExpr="datum.value + ':00'"))
+now_rule = alt.Chart(pd.DataFrame({"hour": [hour_now]})).mark_rule(color=style.MUTED, strokeDash=[2, 2]).encode(x="hour:Q")
+
+chart_left, chart_right = st.columns(2, gap="small")
+with chart_left, st.container(key="panel_chart_load"):
+    st.html(style.title("Zone load", "% of capacity · strained at 80%"))
+    load = so_far.groupby(["hour", "zone"], as_index=False)["zone_stress"].first()
+    load["zone"] = load["zone"].map(rules.zone_short)
+    zones = [rules.zone_short(z) for z in simulator.ZONES]
+    lines = alt.Chart(load).mark_line(strokeWidth=1.8, interpolate="monotone").encode(
+        x=hour_axis,
+        y=alt.Y("zone_stress:Q", title=None, scale=alt.Scale(domain=[0, max(120, float(load["zone_stress"].max()) + 5)]),
+                axis=alt.Axis(labelExpr="datum.value + '%'", tickCount=4)),
+        color=alt.Color("zone:N", scale=alt.Scale(domain=zones, range=style.ZONE_LINE_HEX)),
+        tooltip=[alt.Tooltip("zone:N", title="Zone"), alt.Tooltip("zone_stress:Q", title="Load %", format=".0f")])
+    limit = alt.Chart(pd.DataFrame({"y": [rules.STRAINED_GRID]})).mark_rule(
+        color=style.CORAL, strokeDash=[4, 3], strokeWidth=1.2).encode(y="y:Q")
+    st.altair_chart(theme=None, altair_chart=style.chart_style(lines + limit + now_rule, 165), width="stretch")
+
+with chart_right, st.container(key="panel_chart_charge"):
+    st.html(style.title("Battery charge", "average by home type"))
+    charge = so_far.dropna(subset=["charge_pct"]).groupby(["hour", "household_type"], as_index=False)["charge_pct"].mean()
+    charge["household_type"] = charge["household_type"].str.capitalize()
+    types = ["Regular", "Vulnerable", "Medical"]
+    lines = alt.Chart(charge).mark_line(strokeWidth=1.8, interpolate="monotone").encode(
+        x=hour_axis,
+        y=alt.Y("charge_pct:Q", title=None, scale=alt.Scale(domain=[0, 100]),
+                axis=alt.Axis(labelExpr="datum.value + '%'", tickCount=4)),
+        color=alt.Color("household_type:N", scale=alt.Scale(domain=types, range=["#64748b", "#0ea5e9", style.RING_HEX["medical"]])),
+        tooltip=[alt.Tooltip("household_type:N", title="Homes"), alt.Tooltip("charge_pct:Q", title="Charge %", format=".0f")])
+    st.altair_chart(theme=None, altair_chart=style.chart_style(lines + now_rule, 165), width="stretch")
+
+# ===========================================================================
+# Details: alerts, relief plan, outage zone, normal day
+# ===========================================================================
+with st.container(key="panel_tabs"):
     alerts_tab, relief_tab, outage_tab, normal_tab = st.tabs(SIDE_TABS, key="side_tab")
 
     with alerts_tab:
@@ -842,11 +890,11 @@ with right, st.container(key="panel_side"):
                              "pct": None if pd.isna(a["charge_pct"]) else a["charge_pct"],
                              "hours": hours_left.get(a["battery_id"]), "problem": short_problem(a),
                              "reason": a["reason"]})
-            with st.container(height=470, border=False):
+            with st.container(height=420, border=False):
                 st.html(style.alert_lines(rows))
 
     with relief_tab:
-        with st.container(height=470, border=False):
+        with st.container(height=420, border=False):
             # --- Wildfire precaution: a planned shutoff of the riskiest zone ---
             if fire_plan or shut_off_now:
                 with st.container(border=True):
@@ -991,10 +1039,10 @@ with right, st.container(key="panel_side"):
             facts = [style.tag(f"{z['homes']} homes", "grey"),
                      style.tag(f"{sum(x['charge_pct'] for x in known) / len(known):.0f}% avg", "grey") if known else "",
                      style.tag(f"first empty {rules.hrs(first['hours'])} · Home {int(first['home_id'][5:])}",
-                               "red" if first["hours"] < 2 else "amber") if first else "",
-                     style.tag(f"{out} empty", "red") if out else "",
-                     style.tag(f"{off} off", "red") if off else "",
-                     style.tag(f"power back {back}", "mint")]
+                               "crit" if first["hours"] < 2 else "warn") if first else "",
+                     style.tag(f"{out} empty", "crit") if out else "",
+                     style.tag(f"{off} off", "crit") if off else "",
+                     style.tag(f"power back {back}", "ok")]
             st.html(style.zone_battery_list("".join(f for f in facts if f), rows))
             # Recommended steps: nothing happens until the dispatcher approves
             st.html(style.label("Steps"))
@@ -1028,10 +1076,10 @@ if st.session_state.show_details:
             tooltip=["clock", alt.Tooltip("charge_pct", format=".0f", title="Charge %")],
         )
         # A dot showing the time picked on the slider
-        marker = alt.Chart(over_time[over_time["time"] == now]).mark_point(size=120, filled=True, color="red").encode(
+        marker = alt.Chart(over_time[over_time["time"] == now]).mark_point(size=80, filled=True, color=style.ACCENT).encode(
             x="clock", y="charge_pct",
         )
-        st.altair_chart(chart + marker, width="stretch")
+        st.altair_chart(theme=None, altair_chart=style.chart_style(chart + marker, 220), width="stretch")
         st.caption(f"Batteries fill up on cheap midday solar, then drain during the "
                    f"{EVENT['name'].lower()} ({rules.clock(f'2026-10-17 {EVENT['start_hour']:02d}:00')}–"
                    f"{rules.clock(f'2026-10-17 {EVENT['end_hour']:02d}:00')}).")

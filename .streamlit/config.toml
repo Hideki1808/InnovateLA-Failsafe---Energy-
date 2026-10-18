@@ -1,41 +1,38 @@
 # Look and feel of the dashboard.
-# Style: minimal and calm. Light grey page, white cards with thin 1 px borders, small
-# corners, deep forest-green ink and buttons, a soft mint accent, and small monospace
-# uppercase labels. Red is kept for alarms only. Readable on a projector.
+# Style: an operations console, in the spirit of Datadog and Dynatrace. Cool light-grey
+# page, white square-cornered widgets with thin borders, dense but calm, one indigo
+# accent for controls, and status colors that mean the same thing everywhere.
+# Font: Geist (modern, neutral) and Geist Mono for numbers and tags.
 
 [theme]
 base = "light"
-# Fonts (free Google Fonts):
-#   body text:            Inter, a clean neutral sans
-#   headings and numbers: Hanken Grotesk, a crisp geometric grotesk
-#   labels and tags:      JetBrains Mono (small uppercase "tags" like SCENARIO)
-font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
-headingFont = "Hanken Grotesk:https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@500;600;700;800&display=swap"
-codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600&display=swap"
-baseFontSize = 16                    # still readable from the back of the room
-baseRadius = "10px"                  # small corners
-buttonRadius = "8px"                 # rectangular buttons with a soft corner
-paddingTop = "1rem"
+font = "Geist:https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap"
+headingFont = "Geist:https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap"
+codeFont = "Geist Mono:https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&display=swap"
+baseFontSize = 15                    # dense console text, still readable on a projector
+baseRadius = "4px"                   # square-ish corners
+buttonRadius = "4px"
+paddingTop = "0.5rem"
 
-backgroundColor = "#f5f6f3"          # light grey page
-secondaryBackgroundColor = "#ffffff" # cards and inputs are white
-textColor = "#0f2416"                # deep green-black ink
-borderColor = "#e3e6e0"              # thin borders
+backgroundColor = "#f3f4f7"          # cool light-grey page
+secondaryBackgroundColor = "#ffffff" # widgets and inputs are white
+textColor = "#1d2129"                # near-black, slightly cool
+borderColor = "#dfe2e8"              # thin widget borders
 showWidgetBorder = true
-primaryColor = "#123d1f"             # forest green: buttons, toggles, the slider
+primaryColor = "#4f46e5"             # indigo: buttons, toggles, the slider, selected tab
 
-# Status colors (the same as the map dots)
-redColor = "#e5484d"                 # Needs dispatcher / alarms
-yellowColor = "#d99a00"              # Watch
-blueColor = "#2f6fdb"                # Can wait
-greenColor = "#2e9e5b"               # Normal
-orangeColor = "#f08a24"              # busy zones
-violetColor = "#7b4fd6"              # medical homes
+# Status colors (the same as the map dots and the tiles)
+redColor = "#e5484d"                 # critical: Needs dispatcher, outages
+yellowColor = "#f0a30a"              # warning: Watch
+blueColor = "#3b82f6"                # info: Can wait
+greenColor = "#22a55b"               # ok: Normal
+orangeColor = "#f97316"              # busy zones
+violetColor = "#c026d3"              # medical homes
 redBackgroundColor = "#fde8e8"
-yellowBackgroundColor = "#fdf3d8"
-blueBackgroundColor = "#e9f0fc"
-greenBackgroundColor = "#e3f6e0"
-chartCategoricalColors = ["#123d1f", "#2f6fdb", "#2e9e5b", "#d99a00", "#7b4fd6"]
+yellowBackgroundColor = "#fef3d6"
+blueBackgroundColor = "#e6effe"
+greenBackgroundColor = "#e3f5ea"
+chartCategoricalColors = ["#4f46e5", "#0ea5e9", "#22a55b", "#f0a30a", "#c026d3", "#64748b"]
 
 [client]
 toolbarMode = "minimal"              # hide the developer menu during the demo

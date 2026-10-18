@@ -45,21 +45,25 @@ One screen (the heat-wave demo day; crisis mode on demand):
     ones first, then street blocks of other customers) → shed vulnerable homes →
     critical buildings switch to their own backup. Medical homes are never cut. Every
     step needs the dispatcher's Approve click (cutting power needs an extra confirmation).
-  - Look (minimal, after a mentor review; inspired by the Keyvo site): light grey page,
-    white cards with thin 1 px borders, small corners, deep forest-green ink and buttons,
-    soft mint accent, small monospace uppercase tags (Inter / Hanken Grotesk / JetBrains
-    Mono). Red is for alarms only ("Needs dispatcher", outages, the crisis). No emojis.
-  - Layout, top to bottom (fits 1280x720 in one screen): slim header (logo, name, city
-    tag, Play, time slider, Start/End crisis, settings gear); status line (time,
-    temperature, event, crisis, wildfire risk); 4 metric cards (homes on battery, zones
-    dark, medical at risk, shortest time left / shortest backup); map left; right:
-    "Next steps" (max 3 one-liners, rules.next_steps) + tabs Alerts / Relief plan /
-    Outage zone / Normal day; footer with data-source tags and credits.
-  - Settings gear (popover): country, month, crisis type, severity, seed + Reroll, force
-    full blackout, Step 15 min, Reset day, speed, auto-pause, map legend on/off, data
-    tables on/off. Its widgets use keys "w_<setting>" refreshed from the real setting each
-    run (bind/changed in app.py): popover widgets only mount when opened and would
-    otherwise show and send back their defaults.
+  - Look: an operations console in the spirit of Datadog / Dynatrace. Cool grey page,
+    white square widgets (4 px corners, thin borders) each with a small bold title,
+    Geist / Geist Mono fonts, one indigo accent for controls; green ok, amber warning,
+    red critical everywhere. "Query value" tiles turn solid red/amber by threshold.
+    Charts share style.chart_style (thin lines, light grid, legend below). No emojis.
+  - Layout, top to bottom: toolbar (logo, "Home Battery Fleet / city", Play, time
+    slider, Crisis menu, Start/End crisis, settings gear); status strip (time,
+    temperature, event, crisis, wildfire risk); big map (left, 540 px) with tiles
+    (homes on battery, zones dark, medical at risk, shortest time left / backup) and
+    "Next steps" (max 3, status-colored, rules.next_steps) on the right; two timeseries
+    (zone load vs the 80% line, battery charge by home type; they grow as Play runs);
+    a full-width widget with tabs Alerts / Relief plan / Outage zone / Normal day;
+    footer with data-source chips and credits.
+  - Crisis menu (beside Start crisis): type, severity, seed + Reroll, force full blackout.
+    Settings gear: country, month, Step 15 min, Reset day, speed, auto-pause, map legend
+    on/off, data tables on/off. Menu widgets use keys "w_<setting>" refreshed from the
+    real setting each run (bind/changed in app.py): popover widgets only mount when
+    opened and would otherwise show and send back their defaults.
+  - Backups of earlier looks: git tags before-minimal-redesign, before-console-redesign.
   - Short zone names in compact text (rules.zone_short: "East", "Ost").
   - Backup of the look before this redesign: git tag before-minimal-redesign.
   - Text rules: one line per item, numbers first, nothing repeated (the status line has
