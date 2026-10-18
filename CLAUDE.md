@@ -31,8 +31,7 @@ country-specific comes from **`config/countries.toml`** (all values approximate)
 - Adding a country = copying one `[countries.<id>]` block in the file and changing the
   values. No code changes (tested).
 
-Tabs:
-- **Live dispatch** (the heat-wave demo day):
+One screen (the heat-wave demo day; crisis mode on demand):
   - 40 simulated homes, all on land, with household types: regular (some with flexible
     load), vulnerable (elderly / heat-vulnerable), medical. Plus 3 critical buildings:
     hospital, fire station, cold storage (made-up names).
@@ -50,11 +49,20 @@ Tabs:
     (title, urgent key numbers, Needs dispatcher), small uppercase labels, big numbers
     with captions. Red on the map means Needs dispatcher only, with a pulsing ring.
     No emojis in the interface text.
-  - Layout: key numbers on top, big map (zones shaded by stress, dots by battery state,
-    rings by household type), side panel with summary + Alerts / Response ladder tabs.
+  - Layout, top to bottom (fits 1280x720 with the map starting ~385 px down):
+    title line; top bar (country, month, Play/Step/Reset, time slider, speed, auto-pause;
+    crisis, severity, seed, Reroll, Start/End crisis, Force full blackout; status line
+    with time, temperature, event, crisis and wildfire risk); 4 key numbers (homes on
+    battery, zones dark, medical homes at risk, shortest time left / shortest backup);
+    big map left; right: "What to do" + tabs Alerts / Relief plan / Outage zone /
+    Normal day; More details (folded); footer with data-source labels and credits.
+  - Text rules: one line per item, numbers first, nothing repeated (the status line has
+    the crisis and wildfire risk, so the summary doesn't), durations written one way
+    everywhere (rules.hrs: "20 min", "2.5 h", "12 h"); full reasons show on hover.
+  - Map: mouse wheel zooms; trackpad two-finger slide pans, pinch zooms.
     Play runs the day and pauses on new events; map updates smoothly.
-- **Normal day earnings**: charge cheap at midday, use at the evening peak (Texas ~$96/day,
-  Munich ~€56/day for the fleet).
+  - **Normal day** tab: charge cheap at midday, use at the evening peak (Texas ~$96/day,
+    Munich ~€56/day for the fleet).
 
 Demo story (same in both countries, zone capacities tuned for it): the hospital's zone is
 strained from 2 PM (gentle steps are enough at first), a second zone from 5 PM, a third
@@ -186,13 +194,13 @@ Known gaps today (fix as part of the crisis-mode work):
   python test_crisis.py --without-data
 
 ## Structure
-- app.py: the dashboard (tabs: Live dispatch with the map, Normal day earnings)
+- app.py: the dashboard (one screen: top bar, key numbers, map + side tabs, footer)
 - simulator.py: generates the fake fleet, zones, critical buildings and planted problems
 - rules.py: decides what's normal, what can wait, what needs the dispatcher, the relief
   plan per zone and the summary
 - config/countries.toml: everything country-specific (all values approximate)
 - style.py: the look (colors, a little CSS, stat cards, labels, alert list, legend)
-- map_gestures.py: trackpad gestures on the map (two-finger slide moves it, pinch zooms)
+- map_gestures.py: map gestures (mouse wheel zooms; trackpad two-finger slide moves it, pinch zooms)
 - fetch_data.py: the ONLY file that calls APIs. Run once before the demo:
   python fetch_data.py (weather, OSM critical buildings, USGS earthquakes per country)
 - data/: the fetched data (weather_*, buildings_*, earthquakes_* per country), committed to git

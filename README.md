@@ -42,7 +42,7 @@ Munich, Germany) and press **Play** to run the demo day.
 | `simulator.py` | Makes up the fleet, zones, critical buildings, and the planted problems |
 | `rules.py` | Decides what's normal, what can wait, what needs the dispatcher, the relief plan and the summary |
 | `style.py` | Colors, a little CSS, and small display helpers |
-| `map_gestures.py` | Trackpad gestures on the map (two-finger slide moves it, pinch zooms) |
+| `map_gestures.py` | Map gestures: mouse wheel zooms; trackpad two-finger slide moves it, pinch zooms |
 | `fetch_data.py` | Run once before the demo: downloads real weather (Open-Meteo), critical buildings (OpenStreetMap) and earthquake history (USGS) into `data/`. The app itself never goes online |
 | `data/` | The downloaded data, saved so the app works offline |
 | `test_crisis.py` | Checks crisis mode and prints a report per country, month and crisis type. `python test_crisis.py` (add `--without-data` to test the fallbacks) |

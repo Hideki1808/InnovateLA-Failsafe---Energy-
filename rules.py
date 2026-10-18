@@ -614,6 +614,8 @@ def dark_zone_plan(z):
                  + (f"; {plural(len(saved), 'home')} would then last until power returns." if saved else ".")),
         # only worth asking if someone would otherwise run out or is running low
         "needed": bool(savers) and any(x["runs_out"] or x["low"] for x in savers),
+        "short": (f"+{hrs(gain)} per battery, {SAVE_SHARE:.0%} less use"
+                  + (f" · {len(saved)} then last" if saved else "")),
     })
     at_risk = [x for x in z["runtimes"] if x["household_type"] in ("medical", "vulnerable")
                and (x["runs_out"] or x["low"] or x["hours"] is None or x["short_kw"] > 0.05)]
@@ -624,6 +626,9 @@ def dark_zone_plan(z):
             + ("unknown runtime" if x["hours"] is None else f"{x['hours']:.1f} h left") + ")"
             for x in at_risk) + "." if at_risk else "No medical or vulnerable home is running low."),
         "needed": bool(at_risk),
+        "short": (", ".join(f"Home {int(x['home_id'][5:])} "
+                            + ("silent" if x["hours"] is None else hrs(x["hours"])) for x in at_risk)
+                  if at_risk else "none running low"),
     })
     medical_out = [x for x in z["run_out"] if x["household_type"] == "medical"]
     steps.append({
@@ -633,16 +638,19 @@ def dark_zone_plan(z):
             + f", before power returns in {z['hours_left']:.1f} h." if medical_out
             else "Every medical home's battery should last until power returns."),
         "needed": bool(medical_out),
+        "short": (", ".join(f"Home {int(x['home_id'][5:])} {hrs(x['hours'])}" for x in medical_out)
+                  if medical_out else "every medical battery lasts"),
     })
     buildings_out = [b for b in z["buildings"] if b["runs_out"]]
     why = ([f"{len(medical_out)} medical home{'s' if len(medical_out) != 1 else ''} running out"] if medical_out else []) \
-        + [f"{b['name']} ({'no backup' if not b['backup_hours'] else f'{b['backup_left_h']:.1f} h of backup left'})"
+        + [f"{b['name']} ({'no backup' if not b['backup_hours'] else hrs(b['backup_left_h']) + ' backup left'})"
            for b in buildings_out]
     steps.append({
         "number": 4, "title": "Ask the utility to restore this zone first",
         "what": ("Request priority repair for " + z["zone"] + ": " + "; ".join(why) + "."
                  if why else "Not needed: everyone critical here can wait for the planned restore."),
         "needed": bool(why),
+        "short": "; ".join(why) if why else "not needed",
     })
     return steps
 
@@ -651,6 +659,15 @@ def dark_zone_plan(z):
 # Dispatcher summary: three plain-English lines for the top of the dashboard
 # ---------------------------------------------------------------------------
 LOOKAHEAD_HOURS = 4   # how far ahead the grid forecast looks
+
+
+def hrs(hours):
+    """Every duration on screen is written the same way:
+    under 1 h in minutes (to 5 min), under 10 h with one decimal, then whole hours.
+    0.33 -> '20 min', 2.46 -> '2.5 h', 12.3 -> '12 h'"""
+    if hours < 1:
+        return f"{max(5, round(hours * 12) * 5)} min" if hours > 0.01 else "0 min"
+    return f"{hours:.1f} h" if hours < 10 else f"{hours:.0f} h"
 
 
 def _hour_clock(hour):
@@ -767,43 +784,26 @@ def summary(readings, at_time, results, approved_steps=(), shutoff_approved=Fals
                 coming[z] = t
 
     if strained:
-        listed = ", ".join(f"{z} ({stress_at[z][at_time]:.0f}% of capacity)" for z in strained)
+        listed = ", ".join(f"{z} {stress_at[z][at_time]:.0f}%" for z in strained)
         outlook = f"**{event_label(readings, at_time)}: {plural(len(strained), 'zone')} strained now:** {listed}."
         eases = next((t for t in times[i + 1:]
                       if all(stress_at[z][t] < STRAINED_GRID for z in stress_at if z not in dark)), None)
         if coming:
             z, t = min(coming.items(), key=lambda kv: kv[1])
             outlook += f" {z} expected to join at {clock(t)}."
-        outlook += f" Expected to ease around {clock(eases)}." if eases else " Strain lasts the rest of the day."
+        outlook += f" Easing ~{clock(eases)}." if eases else " Strain lasts the rest of the day."
     elif coming:
         z, t = min(coming.items(), key=lambda kv: kv[1])
         peak = max(stress_at[z][t2] for t2 in ahead)
         outlook = (f"**{event_label(readings, at_time)} expected: {z} strained from {clock(t)}** "
-                   f"(up to {peak:.0f}% of capacity).")
+                   f"(peak {peak:.0f}%).")
         if len(coming) > 1:
             outlook += f" {len(coming) - 1} more zone{'s' if len(coming) > 2 else ''} later."
     else:
         outlook = f"All zones look calm for the next {LOOKAHEAD_HOURS} hours."
 
-    # Wildfire risk (High or Extreme only)
+    # (Wildfire risk, the crisis forecast and dark zones are on the status bar, not repeated here)
     fire = shutoff_plan(readings, at_time)
-    if fire:
-        outlook += (f" **Wildfire risk {fire['level']} in {fire['zone']}**: batteries there hold an "
-                    f"80% reserve.")
-
-    # Crisis forecast: batteries are filling up before it hits
-    now_row = next(r for r in readings if r["time"] == at_time)
-    if now_row.get("crisis_reserve_pct") == simulator.PRECHARGE_PCT:
-        outlook += (f" **{event_label(readings, at_time)} forecast:** batteries are pre-charging to "
-                    f"{simulator.PRECHARGE_PCT}% so homes have backup if power goes out.")
-
-    # Blackout (crisis mode) goes first: it's the biggest news
-    if blackout:
-        names = ", ".join(z["zone"] for z in blackout)
-        back = max(z["end"] for z in blackout)
-        outlook = (f"**Blackout: {plural(len(blackout), 'zone')} without grid power** ({names}; "
-                   f"{blackout[0]['cause']}). Homes there run on their batteries; power expected back "
-                   + (f"by about {_hour_clock(back)}. " if back < 24 else "not before the end of the day. ") + outlook)
 
     # --- Action: dark zones first, then strained zones (most strained first), then urgent batteries ---
     actions = []
@@ -838,7 +838,7 @@ def summary(readings, at_time, results, approved_steps=(), shutoff_approved=Fals
         actions.append(f"let batteries in {z} finish charging before {clock(t)} so they're full when the strain hits")
     if fire and not shutoff_approved:
         actions.append(f"consider a precautionary shutoff of {fire['zone']} (wildfire risk {fire['level'].lower()}; "
-                       f"see the Response ladder tab)")
+                       f"see the Relief plan tab)")
 
     singles = [r for r in single if r not in low or len(low) < 3]
     actions += [problem_and_action(r)[2] for r in singles[:2]]
@@ -851,7 +851,7 @@ def summary(readings, at_time, results, approved_steps=(), shutoff_approved=Fals
     # Keep it short enough to read at a glance: the top 3, and point to the rest
     if len(actions) > 3:
         extra = len(actions) - 3
-        actions = actions[:3] + [f"{extra} more item{'s' if extra > 1 else ''} in the Alerts and Response ladder tabs"]
+        actions = actions[:3] + [f"{extra} more item{'s' if extra > 1 else ''} in the Alerts and Relief plan tabs"]
 
     if actions:
         action = "**Recommended:** " + " ".join(f"{n}) {a[0].upper() + a[1:]}." for n, a in enumerate(actions, 1))

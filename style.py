@@ -59,17 +59,30 @@ CSS = f"""
           color: {MUTED}; margin: 0 0 .5rem 0; }}
 
   /* The big coral title */
-  .brand {{ font-family: "Outfit", "Inter Tight", sans-serif; font-size: 2.4rem; font-weight: 700;
+  .brand {{ font-family: "Outfit", "Inter Tight", sans-serif; font-size: 1.9rem; font-weight: 700;
             color: {CORAL}; letter-spacing: -.03em;
             line-height: 1.05; margin: 0; }}
+  .brand .region {{ font-family: "Inter Tight", sans-serif; font-size: .8rem; font-weight: 600;
+                    letter-spacing: .14em; text-transform: uppercase; color: {MUTED}; margin-left: .9rem; }}
+
+  /* Less empty space above the page, so the map fits on a 720 px projector */
+  [data-testid="stMainBlockContainer"] {{ padding-top: 1.2rem; padding-bottom: 1.5rem; }}
+  .st-key-panel_top {{ padding: .7rem 1.1rem !important; gap: .55rem; }}
+  .st-key-panel_top [data-baseweb="select"] div, .st-key-panel_top input,
+  .st-key-panel_top button p, .st-key-panel_top label p,
+  .st-key-panel_top [data-testid="stMarkdownContainer"] p {{ font-size: .88rem; white-space: nowrap; }}
+  .st-key-panel_top .status-bar {{ background: #f6f5f3; margin: 0; padding: .4rem .9rem; }}
+  [data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] {{ gap: .55rem; }}
+  .st-key-panel_map {{ padding: 1rem !important; }}
 
   /* Key numbers: very large number, short caption underneath */
   .stats {{ display: grid; grid-template-columns: repeat(var(--n), 1fr); gap: 1.5rem;
-            background: #fff; border-radius: 20px; padding: 1.1rem 1.8rem; }}
-  .stat .num {{ font-size: 2.8rem; font-weight: 800; color: {CORAL}; line-height: 1;
+            background: #fff; border-radius: 20px; padding: .8rem 1.6rem; }}
+  .stat .num {{ font-size: 2.4rem; font-weight: 800; color: {CORAL}; line-height: 1;
                 letter-spacing: -.04em; white-space: nowrap; }}
   .stat .num.ink {{ color: {INK}; }}
-  .stat .cap {{ font-size: 1rem; color: {MUTED}; margin-top: .45rem; line-height: 1.25; }}
+  .stat .cap {{ font-size: .95rem; color: {MUTED}; margin-top: .35rem; line-height: 1.25;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
 
   /* White rounded panels (Streamlit containers created with key="panel_...") */
   [class*="st-key-panel_"] {{ background: #fff; border-radius: 20px; padding: 1.3rem 1.5rem; }}
@@ -106,6 +119,16 @@ CSS = f"""
                  padding: .1rem .55rem; border-radius: 8px; background: rgba(255,255,255,.85);
                  color: {MUTED}; font-size: .72rem; pointer-events: none; }}
 
+  /* Alerts: one line each */
+  .aline {{ display: flex; gap: .5rem; align-items: center; padding: .35rem .2rem; font-size: .9rem;
+            border-bottom: 1px solid {LINE}; white-space: nowrap; }}
+  .aline span {{ flex: none; }}
+  .aline .p {{ flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }}
+  .aline .v {{ font-weight: 600; }}
+  .aline .dot {{ width: 11px; height: 11px; border-radius: 50%; }}
+  .aline .n {{ font-weight: 700; }}
+  .aline .t {{ color: {MUTED}; }}
+
   /* Dark zone battery list: one line per battery, with a small charge bar */
   .zl-facts {{ font-size: .95rem; margin: .1rem 0 .5rem; }}
   .zl {{ max-height: 330px; overflow-y: auto; }}
@@ -121,7 +144,7 @@ CSS = f"""
   .zl-bar span {{ display: block; height: 100%; border-radius: 4px; }}
 
   /* Legend under the map */
-  .legend {{ font-size: .95rem; color: {INK}; line-height: 2.1; }}
+  .legend {{ font-size: .85rem; color: {INK}; line-height: 2; }}
   .legend b {{ font-weight: 600; color: {MUTED}; font-size: .78rem; letter-spacing: .12em;
                text-transform: uppercase; margin-right: .4rem; }}
   .sw {{ display: inline-block; width: 13px; height: 13px; vertical-align: -1px;
@@ -230,8 +253,8 @@ def zone_battery_list(facts_html, rows):
         if x["hours"] is None:
             return "silent"
         if x["hours"] <= 0.01:
-            return "out"
-        return f"{x['hours'] * 60:.0f} min" if x["hours"] < 59.5 / 60 else f"{x['hours']:.1f} h"
+            return "empty"
+        return rules.hrs(x["hours"])
 
     lines = []
     for x in rows:
@@ -253,12 +276,28 @@ def severity_dots(severity):
     return f'<span class="sev">{"●" * severity}{"○" * (5 - severity)}</span>'
 
 
-def status_bar(crisis_html, fire_html):
-    """The bar under the crisis controls: the crisis banner on the left (empty when there's
-    no crisis) and the wildfire risk on the right (always)."""
-    left = crisis_html or f'<span class="muted" style="margin:0">No crisis. Start one above.</span>'
-    return (f'<div class="status-bar{" crisis" if crisis_html else ""}"><div>{left}</div>'
+def status_bar(left_html, fire_html, crisis=False):
+    """The bar under the top controls: time, weather and the crisis (if any) on the left,
+    the wildfire risk on the right (always). crisis=True adds a coral edge."""
+    return (f'<div class="status-bar{" crisis" if crisis else ""}"><div>{left_html}</div>'
             f'<div>{fire_html}</div></div>')
+
+
+def alert_lines(rows):
+    """One line per alert: colored dot, home, type, charge %, hours left, what's wrong.
+    The full reason shows when hovering the line.
+    rows: dicts with category, name, type, pct (or None), hours (or None), problem, reason."""
+    out = []
+    for a in rows:
+        numbers = " · ".join(([f"{a['pct']:.0f}%"] if a["pct"] is not None else [])
+                             + ([rules.hrs(a["hours"])] if a["hours"] is not None else []))
+        out.append(
+            f'<div class="aline" title="{escape(a["reason"])}">'
+            f'<span class="dot" style="background:{STATE_HEX[a["category"]]}"></span>'
+            f'<span class="n">{escape(a["name"])}</span><span class="t">{escape(a["type"])}</span>'
+            + (f'<span class="v">{numbers}</span>' if numbers else "")
+            + f'<span class="p">{escape(a["problem"])}</span></div>')
+    return "".join(out)
 
 
 def alert_list(rows):

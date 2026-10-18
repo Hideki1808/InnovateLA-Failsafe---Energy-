@@ -1,17 +1,19 @@
 """
-map_gestures.py - trackpad gestures for the map.
+map_gestures.py - mouse and trackpad gestures for the map.
 
 What it does:
+  - Mouse wheel                          -> the map ZOOMS in and out.
   - Two fingers sliding on the trackpad  -> the map MOVES (pans) with your fingers.
   - Pinching two fingers in or out       -> the map ZOOMS.
-  (A mouse wheel also pans; zoom with a pinch, Ctrl + wheel, the +/- buttons, or a
-  double-click.)
 
-Why it needs a little JavaScript: browsers report a two-finger slide as a "wheel"
-event, and the map library turns every wheel event into zooming. A pinch arrives as a
-wheel event with the Ctrl key flag set. So the script below catches wheel events over
-the map: if Ctrl is set (a pinch) it lets the map zoom as usual; otherwise it stops the
-zoom and moves the map instead.
+Why it needs a little JavaScript: browsers report a two-finger slide, a pinch and a
+mouse wheel all as "wheel" events, and the map library zooms on every one of them. The
+script below tells them apart:
+  - a pinch has the Ctrl key flag set                      -> let the map zoom
+  - a mouse wheel moves in whole "notches": counted in lines, or in big round steps
+    (like 100 pixels) straight up or down                  -> let the map zoom
+  - anything else (small or sideways steps) is a trackpad slide -> move the map instead
+(A guess: a few "free-spinning" mouse wheels send small steps and will pan instead.)
 
 It runs in the page once (a hidden helper frame installs it on the dashboard).
 """
@@ -22,8 +24,8 @@ _SCRIPT = """
 <script>
 (function () {
   const page = window.parent;                 // the dashboard page around this helper frame
-  if (page.__twoFingerPan) return;            // install only once
-  page.__twoFingerPan = true;
+  if (page.__mapGestures2) return;            // install only once
+  page.__mapGestures2 = true;
 
   // Find the map object (deck.gl) behind a map canvas, through React's internals.
   function findDeck(canvas) {
@@ -43,6 +45,9 @@ _SCRIPT = """
     const wrapper = e.target.closest && e.target.closest("#deckgl-wrapper");
     if (!wrapper) return;                      // not over the map
     if (e.ctrlKey) return;                     // a pinch: let the map zoom as usual
+    const wheelNotch = e.deltaMode !== 0 ||   // counted in lines or pages: a mouse wheel
+      (e.deltaX === 0 && Math.abs(e.deltaY) >= 40 && Number.isInteger(e.deltaY));
+    if (wheelNotch) return;                    // a mouse wheel: let the map zoom as usual
     const canvas = wrapper.querySelector("canvas#deckgl-overlay");
     if (!canvas) return;
 
@@ -53,8 +58,7 @@ _SCRIPT = """
     if (!deck) return;
     const viewport = deck.getViewports()[0];
     if (!viewport) return;
-    const scale = e.deltaMode === 1 ? 16 : 1;  // some mice report lines instead of pixels
-    const dx = e.deltaX * scale, dy = e.deltaY * scale;
+    const dx = e.deltaX, dy = e.deltaY;
     // The spot that should end up in the middle of the map, after moving by (dx, dy)
     const [longitude, latitude] = viewport.unproject([viewport.width / 2 + dx, viewport.height / 2 + dy]);
     const viewState = Object.assign({}, deck.viewManager.getViewState(viewport.id), {longitude, latitude});
