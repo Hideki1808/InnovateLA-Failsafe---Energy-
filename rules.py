@@ -530,7 +530,8 @@ def zone_runtimes(readings, at_time, homes, zone):
     runtimes = []
     for r in homes:
         hours, short_kw = battery_runtime(r, sorted(coming[r["battery_id"]], key=lambda x: x["time"]))
-        runtimes.append({"battery_id": r["battery_id"], "household_type": r["household_type"],
+        runtimes.append({"battery_id": r["battery_id"], "home_id": r["home_id"],
+                         "household_type": r["household_type"], "tripped": r["battery_status"] == "tripped",
                          "charge_pct": r["charge_pct"], "need_kw": round(demand_kw(r), 1),
                          "hours": hours, "short_kw": short_kw})
     known = sorted((x for x in runtimes if x["hours"] is not None), key=lambda x: x["hours"])

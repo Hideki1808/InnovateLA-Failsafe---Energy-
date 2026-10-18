@@ -116,10 +116,21 @@ def draw_map(below, above, urgent_rows, view, tooltip):
         get_line_color=style.rgb(style.CORAL, 30 if out else 230), line_width_min_pixels=3,
         transitions={"getRadius": fade_ms, "getLineColor": fade_ms},
     )
-    st.pydeck_chart(pdk.Deck(layers=below + [pulse] + above, initial_view_state=view,
-                             map_style="light_no_labels", tooltip=tooltip),
-                    height=520, key="fleet_map")   # same key every time = update the map in place
-                    #   (also when switching country: it then moves to the new view, centred)
+    event = st.pydeck_chart(pdk.Deck(layers=below + [pulse] + above, initial_view_state=view,
+                                     map_style="light_no_labels", tooltip=tooltip),
+                            # same key every time = update the map in place (also when switching
+                            # country: it then moves to the new view, centred). It changes only after
+                            # a click, to drop Streamlit's highlight of the clicked shape.
+                            height=520, key=f"fleet_map_{st.session_state.get('map_version', 0)}",
+                            on_select="rerun", selection_mode="single-object")
+    # Clicked a zone, or a home or building in it? Remember the zone and redraw the whole
+    # page, so the side panel can list that zone's batteries. The map is then drawn fresh
+    # (new key), because Streamlit would otherwise dim everything but the clicked shape.
+    picked = [o for objects in event.selection.get("objects", {}).values() for o in objects if o.get("zone")]
+    if picked:
+        st.session_state.picked_zone = picked[0]["zone"]
+        st.session_state.map_version = st.session_state.get("map_version", 0) + 1
+        st.rerun()
 
 
 # --- Country: everything country-specific comes from config/countries.toml ---
@@ -423,7 +434,7 @@ with live_tab:
                      + (style.MAP_PULSE_CSS if crisis_live else ""))
 
     # --- Main area: big map on the left, side panel with what to do on the right ---
-    left, right = st.columns([1.9, 1.1], gap="medium")
+    left, right = st.columns([1.75, 1.25], gap="medium")
 
     with left, st.container(key="panel_map"):
         st.html(style.label("Fleet map"))
@@ -465,7 +476,7 @@ with live_tab:
                 forecast_paths += style.dashed_outline(z["shape"])
             corners = [[lon, lat] for lat, lon in z["shape"]]
             zone_rows.append({
-                "polygon": corners, "fill": fill, "label": label,
+                "zone": name, "polygon": corners, "fill": fill, "label": label,
                 # Label in the zone's top-left corner, out of the way of the dots
                 "lat": max(p[1] for p in corners), "lon": min(p[0] for p in corners),
                 "title": title, "line1": line1,
@@ -507,7 +518,7 @@ with live_tab:
                                + ([f"{r['charge_pct']:.0f}%"] if pd.notna(r["charge_pct"]) else []) + [left_text])
             in_dark = r["zone"] in dark_zones
             home_rows.append({
-                "lat": r["lat"], "lon": r["lon"],
+                "zone": r["zone"], "lat": r["lat"], "lon": r["lon"],
                 "color": level_color(r) if in_dark else STATE_COLORS[r["category"]],
                 "household_type": r["household_type"], "category": r["category"],
                 "ring": RING_COLORS.get(r["household_type"], [0, 0, 0, 0]),
@@ -521,7 +532,7 @@ with live_tab:
         # Critical buildings are squares about 70 m across (corners worked out in degrees)
         half_lat, half_lon = 35 / 111_320, 35 / 92_530
         building_rows = [{
-            "lat": b["lat"], "lon": b["lon"], "label": b["name"],
+            "zone": b["zone"], "lat": b["lat"], "lon": b["lon"], "label": b["name"],
             "square": [[b["lon"] - half_lon, b["lat"] - half_lat], [b["lon"] + half_lon, b["lat"] - half_lat],
                        [b["lon"] + half_lon, b["lat"] + half_lat], [b["lon"] - half_lon, b["lat"] + half_lat]],
             "title": b["name"],                     # the real OpenStreetMap name, if real
@@ -536,24 +547,25 @@ with live_tab:
                        for other in building_rows[:i])
             row["offset"] = [14, 18 * near]
 
-        def dots(data, radius_m, min_px, max_px, color, pickable=False):
+        def dots(data, radius_m, min_px, max_px, color, pickable=False, layer_id=None):
             """A layer of round dots. Rings are drawn as a slightly bigger dot underneath.
             When a dot changes color it fades over FADE_MS instead of jumping."""
             return pdk.Layer("ScatterplotLayer", data, get_position=["lon", "lat"], get_fill_color=color,
                              get_radius=radius_m, radius_min_pixels=min_px, radius_max_pixels=max_px,
                              stroked=True, get_line_color=[255, 255, 255], line_width_min_pixels=1.5,
-                             pickable=pickable, transitions={"getFillColor": FADE_MS})
+                             pickable=pickable, transitions={"getFillColor": FADE_MS}, id=layer_id)
 
         below = [
             # Zones: lightly shaded, with their name and stress in the corner
-            pdk.Layer("PolygonLayer", zone_rows, get_polygon="polygon", get_fill_color="fill",
+            pdk.Layer("PolygonLayer", zone_rows, id="zones", get_polygon="polygon", get_fill_color="fill",
                       get_line_color=ink + [90], line_width_min_pixels=1, pickable=True,
                       transitions={"getFillColor": FADE_MS}),
                 # Zones forecast to lose power: a dashed coral outline
             pdk.Layer("PathLayer", forecast_paths, get_path="path", get_color=style.rgb(style.CORAL, 230),
                       get_width=3, width_units="'pixels'", cap_rounded=True),
             # Critical buildings: larger squares with their name beside them
-            pdk.Layer("PolygonLayer", building_rows, get_polygon="square", get_fill_color=BUILDING_COLOR,
+            pdk.Layer("PolygonLayer", building_rows, id="buildings", get_polygon="square",
+                      get_fill_color=BUILDING_COLOR,
                       get_line_color=[255, 255, 255], line_width_min_pixels=2, pickable=True),
             pdk.Layer("TextLayer", character_set="'auto'", font_family=f"'{style.FONT}'", data=building_rows, get_position=["lon", "lat"], get_text="label", get_color=ink,
                       get_size=14, font_weight=600, get_text_anchor="'start'", get_pixel_offset="offset"),
@@ -563,7 +575,7 @@ with live_tab:
             # Homes: rings first (thick violet for medical, thin ink for vulnerable), then the dot
             dots(medical_rows, 62, 12, 16, "ring"),
             dots(vulnerable_rows, 46, 9, 12, "ring"),
-            dots(home_rows, 32, 7, 10, "color", pickable=True),
+            dots(home_rows, 32, 7, 10, "color", pickable=True, layer_id="homes"),
             # Zone names last, on a white tag, so no dot ever covers them
             pdk.Layer("TextLayer", character_set="'auto'", font_family=f"'{style.FONT}'", data=zone_rows, get_position=["lon", "lat"], get_text="label",
                       get_color=ink, get_size=16, font_weight=700, get_text_anchor="'start'",
@@ -596,6 +608,50 @@ with live_tab:
                               blackout=blackout, dark_approved=dark_approved_now)
         st.html(style.label("What's happening") + style.pill(brief["level"]))
         st.markdown(f"{brief['status']}  \n{brief['outlook']}  \n{brief['action']}")
+
+        # --- Dark zone: its batteries, shortest runtime first (click the zone on the map,
+        # or pick it here). Medical homes and critical buildings are pinned at the top. ---
+        if blackout:
+            names = [z["zone"] for z in blackout]
+            picked = st.session_state.get("picked_zone")
+            click = st.session_state.get("map_version", 0)
+            if click != st.session_state.get("click_applied"):        # a new click on the map
+                st.session_state.click_applied = click
+                if picked in names:
+                    st.session_state.dark_zone_pick = picked
+            if st.session_state.get("dark_zone_pick") not in names:
+                st.session_state.dark_zone_pick = names[0]
+            with st.container(border=True, key="dark_zone_view"):
+                st.html(style.label("Dark zone batteries"))
+                st.selectbox("Dark zone", names, key="dark_zone_pick", label_visibility="collapsed",
+                             help="Or click a dark zone on the map")
+                z = next(z for z in blackout if z["zone"] == st.session_state.dark_zone_pick)
+                rows = []
+                for x in z["runtimes"]:
+                    rows.append({"name": f"Home {int(x['home_id'][5:])}", "type": x["household_type"].capitalize(),
+                                 "pct": x["charge_pct"], "hours": x["hours"],
+                                 "pinned": x["household_type"] == "medical", "kind": x["household_type"],
+                                 "off": x["tripped"]})
+                for b in z["buildings"]:                 # critical buildings run on their own backup
+                    rows.append({"name": b["name"], "type": b["building_type"].replace("_", " ").capitalize(),
+                                 "pct": 100 * b["backup_left_h"] / b["backup_hours"] if b["backup_hours"] else 0,
+                                 "hours": b["backup_left_h"] if b["backup_hours"] else 0,
+                                 "no_backup": not b["backup_hours"], "pinned": True, "kind": "building"})
+                # Pinned first (medical homes, critical buildings), then shortest runtime first
+                rows.sort(key=lambda x: (not x["pinned"], x["hours"] is None, x["hours"] or 0))
+                known = [x for x in z["runtimes"] if x["charge_pct"] is not None]
+                running = [x for x in z["runtimes"] if x["hours"] and x["hours"] > 0.01]
+                out = len([x for x in z["runtimes"] if x["hours"] is not None and x["hours"] <= 0.01
+                           and not x["tripped"]])
+                off = len([x for x in z["runtimes"] if x["tripped"]])
+                first = min(running, key=lambda x: x["hours"]) if running else None
+                facts = [f"<b>{z['homes']}</b> homes",
+                         f"average <b>{sum(x['charge_pct'] for x in known) / len(known):.0f}%</b>" if known else "",
+                         (f"first runs out in <b>{duration(first['hours'])}</b> (Home {int(first['home_id'][5:])})"
+                          if first else "")
+                         + (f", {out} already out" if out else "")
+                         + (f", {rules.plural(off, 'battery')} off" if off else "")]
+                st.html(style.zone_battery_list(" · ".join(f for f in facts if f), rows))
 
         alerts_tab, ladder_tab = st.tabs(["Alerts", "Response ladder"])
         with alerts_tab:

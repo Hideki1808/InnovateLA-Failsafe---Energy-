@@ -106,6 +106,20 @@ CSS = f"""
                  padding: .1rem .55rem; border-radius: 8px; background: rgba(255,255,255,.85);
                  color: {MUTED}; font-size: .72rem; pointer-events: none; }}
 
+  /* Dark zone battery list: one line per battery, with a small charge bar */
+  .zl-facts {{ font-size: .95rem; margin: .1rem 0 .5rem; }}
+  .zl {{ max-height: 330px; overflow-y: auto; }}
+  .zl-row {{ display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) 2.5em 3.4em 30px;
+             gap: .3rem; align-items: center; padding: .25rem .3rem; font-size: .8rem;
+             border-bottom: 1px solid {LINE}; border-left: 3px solid transparent; }}
+  .zl-row.medical {{ border-left-color: {RING_HEX["medical"]}; }}
+  .zl-row.building {{ border-left-color: {BUILDING_HEX}; }}
+  .zl-row span {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+  .zl-row .t {{ color: {MUTED}; }}
+  .zl-row .n {{ font-weight: 600; }}
+  .zl-bar {{ height: 7px; background: #ece9e5; border-radius: 4px; overflow: hidden; }}
+  .zl-bar span {{ display: block; height: 100%; border-radius: 4px; }}
+
   /* Legend under the map */
   .legend {{ font-size: .95rem; color: {INK}; line-height: 2.1; }}
   .legend b {{ font-weight: 600; color: {MUTED}; font-size: .78rem; letter-spacing: .12em;
@@ -202,6 +216,36 @@ def dashed_outline(shape, dash_m=55, gap_m=35):
                                     [lon1 + (lon2 - lon1) * b, lat1 + (lat2 - lat1) * b]]})
             pos += dash_m + gap_m
     return dashes
+
+
+def zone_battery_list(facts_html, rows):
+    """The dark-zone list: a line of key facts, then one line per battery or building:
+    name, type, charge %, hours left, and a small bar (colored like the map's dark-zone dots).
+    rows: dicts with name, type, pct (None = unknown), hours (None = unknown), kind, pinned."""
+    def hours_text(x):
+        if x.get("no_backup"):
+            return "no backup"
+        if x.get("off"):
+            return "off"                     # tripped: switched off, whatever its charge
+        if x["hours"] is None:
+            return "silent"
+        if x["hours"] <= 0.01:
+            return "out"
+        return f"{x['hours'] * 60:.0f} min" if x["hours"] < 59.5 / 60 else f"{x['hours']:.1f} h"
+
+    lines = []
+    for x in rows:
+        pct = x["pct"]
+        color = (MUTED if pct is None else STATE_HEX[rules.NORMAL] if pct > 50
+                 else STATE_HEX[rules.WATCH] if pct >= 20 else STATE_HEX[rules.NEEDS_DISPATCHER])
+        pinned = x["kind"] if x["kind"] in ("medical", "building") else ""
+        lines.append(
+            f'<div class="zl-row {pinned}"><span class="n" title="{escape(x["name"])}">{escape(x["name"])}</span>'
+            f'<span class="t" title="{escape(x["type"])}">{escape(x["type"])}</span>'
+            f'<span>{"-" if pct is None else f"{pct:.0f}%"}</span><span>{hours_text(x)}</span>'
+            f'<span class="zl-bar"><span style="width:{0 if pct is None else max(pct, 2):.0f}%;'
+            f'background:{color}"></span></span></div>')
+    return f'<div class="zl-facts">{facts_html}</div><div class="zl">{"".join(lines)}</div>'
 
 
 def severity_dots(severity):

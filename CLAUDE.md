@@ -134,6 +134,13 @@ Known gaps today (fix as part of the crisis-mode work):
   forecast get a dashed coral outline and "Outage ~time" label. Hovers are short
   ("Home 12 · Medical · 64% · ~7h left", buildings by their real name). Credits
   "© OpenStreetMap contributors · © CARTO" sit in the map's bottom-left corner.
+- Dark zone batteries (side panel, under the summary, while zones are dark): click a dark
+  zone on the map (or a home/building in it) or pick it in the box. Top line: homes,
+  average %, time until the first battery runs out. One line per battery: name, type,
+  %, hours left, a small % bar; medical homes and critical buildings pinned on top, then
+  shortest runtime first. Map clicks use st.pydeck_chart(on_select="rerun"); layers need
+  an id to be clickable, and after each click the map gets a new key so Streamlit's
+  "dim everything else" highlight goes away (the view re-centres).
   crisis.blackouts(): chance of any outage by severity (1: 5%, 2: 20%, 3: 45%, 4-5:
   always), share of zones dark (about 1/2 at 4, 3/4 at 5), zones drawn weighted by type
   (wildfire: region edges x wildfire_exposure; windstorm: config overhead_lines;
