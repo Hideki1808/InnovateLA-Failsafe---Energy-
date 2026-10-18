@@ -223,9 +223,9 @@ def check_dashboard():
                 at.session_state.crisis_severity = 4
                 next(b for b in at.button if b.label == "Start crisis").click().run()
                 if full:
-                    at.toggle(key="full_blackout").set_value(True).run()
+                    at.toggle(key="w_full_blackout").set_value(True).run()
                 for _ in range(8):
-                    next(b for b in at.button if b.label == "Step").click().run()
+                    next(b for b in at.button if b.label == "Step 15 min").click().run()
             html = " ".join(getattr(h, "body", "") or "" for h in at.get("html"))
             labels_ok = "Weather: simulated" in html and "Buildings: simulated" in html
             check(not at.exception and labels_ok,

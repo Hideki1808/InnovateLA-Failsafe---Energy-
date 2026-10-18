@@ -485,50 +485,95 @@ new_events = [(k, msg) for k, msg in events if k not in st.session_state.seen]
 st.session_state.seen |= {k for k, _ in events}
 
 # ===========================================================================
-# Top bar: title, country, month, Play/time, crisis controls
+# Header: name, Play and time, Start/End crisis, and a gear with every other setting
 # ===========================================================================
-st.html(f'<p class="brand">Home Battery Fleet<span class="region">Live grid dispatch · {COUNTRY["region"]}</span></p>')
-with st.container(key="panel_top"):
-    t1, t2, t3, t4, t5, t_slider, t6, t7 = st.columns([1.95, 1.55, 0.95, 0.95, 1.0, 2.1, 1.4, 1.75],
-                                                       vertical_alignment="center")
-    t1.selectbox("Country", list(simulator.COUNTRIES), key="country", on_change=reset_demo,
-                 format_func=lambda c: simulator.COUNTRIES[c]["name"].split(" · ")[-1],
-                 label_visibility="collapsed", help="Country numbers are approximate (config file)")
-    t2.selectbox("Month", range(1, 13), key="month", on_change=reset_demo, label_visibility="collapsed",
-                 format_func=lambda m: weather.MONTHS[m - 1], help="Weather, crisis odds and the fleet follow the month")
-    t3.button("Pause" if st.session_state.playing else "Play", on_click=toggle_play,
-              type="primary", width="stretch")
-    t4.button("Step", on_click=step_forward, width="stretch", help="Forward 15 minutes")
-    t5.button("Reset", on_click=jump_to, args=(DEMO_START,), width="stretch",
-              help="Back to noon, normal day, no crisis")
-    t_slider.select_slider("Time of day", options=times, key="now", label_visibility="collapsed",
-                           format_func=lambda t: t[11:])   # show just "16:30"
-    speed = t6.selectbox("Speed", list(SPEEDS), index=1, label_visibility="collapsed",
-                         help="Play speed")
-    pause_on_events = t7.checkbox("Auto-pause", value=True,
-                                  help="Stop playing on each new event (silent battery, strain, outage...)")
+st.session_state.setdefault("speed", "Normal")
+st.session_state.setdefault("auto_pause", True)
+st.session_state.setdefault("show_legend", True)
+st.session_state.setdefault("show_details", False)
+st.session_state.setdefault("full_blackout", False)
 
-    # (labels are inside the boxes, to keep the bar short: "Crisis: Random", "Severity 4 · severe")
-    k1, k2, k_seed, k3, k4, k5, k6 = st.columns([1.95, 1.85, 0.6, 1.05, 1.0, 1.35, 2.2], vertical_alignment="center")
-    k1.selectbox("Crisis", ["random"] + list(crisis.TYPES), key="crisis_choice", disabled=crisis_running,
-                 format_func=lambda k: "Crisis: " + ("Random" if k == "random" else crisis.TYPES[k]["name"]),
-                 label_visibility="collapsed", help="Random: picked by this month's odds (it picks the severity too)")
-    k2.selectbox("Severity", range(1, 6), key="crisis_severity", label_visibility="collapsed",
-                 disabled=crisis_running or st.session_state.crisis_choice == "random",
-                 format_func=lambda s: f"Severity {s} · {crisis.SEVERITY_NAMES[s].lower()}")
-    k_seed.markdown("Seed")
-    k3.number_input("Seed", min_value=0, max_value=999_999, step=1, key="crisis_seed",
-                    label_visibility="collapsed", help="The same seed replays exactly the same crisis")
-    k4.button("Reroll", on_click=reroll, width="stretch", help="A new random seed: a new outcome")
+
+def bind(name):
+    """
+    Widgets in the settings gear use their own key ("w_" + name), refreshed from the real
+    setting on every run. (A settings widget only appears when the gear is opened; without
+    this it would show its default value then, and send that back as if it were a change.)
+    """
+    st.session_state["w_" + name] = st.session_state[name]
+    return "w_" + name
+
+
+def changed(name, then=None):
+    """A settings widget changed: copy its value to the real setting, then react (if needed)."""
+    st.session_state[name] = st.session_state["w_" + name]
+    if then:
+        then()
+
+
+with st.container(key="panel_top"):
+    h_brand, h_play, h_time, h_crisis, h_gear = st.columns([2.7, 0.8, 3.4, 1.3, 0.5], vertical_alignment="center")
+    h_brand.html(style.brand("Home Battery Fleet", COUNTRY["region"].split(", ")[-1]))   # e.g. "Austin"
+    h_play.button("Pause" if st.session_state.playing else "Play", on_click=toggle_play,
+                  type="primary", width="stretch", icon=":material/pause:" if st.session_state.playing
+                  else ":material/play_arrow:")
+    h_time.select_slider("Time of day", options=times, key="now", label_visibility="collapsed",
+                         format_func=lambda t: t[11:])   # show just "16:30"
     if crisis_running:
-        k5.button("End crisis", on_click=end_crisis, width="stretch",
-                  help="The crisis stops now and power comes back everywhere")
+        h_crisis.button("End crisis", on_click=end_crisis, width="stretch",
+                        help="The crisis stops now and power comes back everywhere")
     else:
-        k5.button("Start crisis", on_click=start_crisis, type="primary", width="stretch",
-                  help="Starts now, also while playing. Forecastable crises are announced first.")
-    k6.toggle("Force full blackout", key="full_blackout", on_change=toggle_full_blackout,
-              disabled=not crisis_running, help="Cut grid power to every zone (start a crisis first)")
-    status_slot = st.empty()                 # the status line, filled in below
+        h_crisis.button("Start crisis", on_click=start_crisis, width="stretch",
+                        help="Starts now, also while playing. Choose which crisis in the settings.")
+
+    # --- Settings: everything else, folded into the gear ---
+    with h_gear.popover("", icon=":material/settings:", help="Settings", width="stretch"):
+        st.html(style.label("Scenario"))
+        s1, s2 = st.columns(2)
+        s1.selectbox("Country", list(simulator.COUNTRIES), key=bind("country"),
+                     on_change=changed, args=("country", reset_demo),
+                     format_func=lambda c: simulator.COUNTRIES[c]["name"].split(" · ")[-1],
+                     help="Country numbers are approximate (config file)")
+        s2.selectbox("Month", range(1, 13), key=bind("month"), on_change=changed, args=("month", reset_demo),
+                     format_func=lambda m: weather.MONTHS[m - 1],
+                     help="Weather, crisis odds and the fleet follow the month")
+
+        st.html(style.label("Crisis"))
+        s1, s2 = st.columns(2)
+        s1.selectbox("Type", ["random"] + list(crisis.TYPES), key=bind("crisis_choice"), disabled=crisis_running,
+                     on_change=changed, args=("crisis_choice",),
+                     format_func=lambda k: "Random (month's odds)" if k == "random" else crisis.TYPES[k]["name"],
+                     help="Random: picked by this month's odds (it picks the severity too)")
+        s2.selectbox("Severity", range(1, 6), key=bind("crisis_severity"),
+                     on_change=changed, args=("crisis_severity",),
+                     disabled=crisis_running or st.session_state.crisis_choice == "random",
+                     format_func=lambda s: f"{s} · {crisis.SEVERITY_NAMES[s]}")
+        s1, s2 = st.columns(2, vertical_alignment="bottom")
+        s1.number_input("Seed", min_value=0, max_value=999_999, step=1, key=bind("crisis_seed"),
+                        on_change=changed, args=("crisis_seed",),
+                        help="The same seed replays exactly the same crisis")
+        s2.button("Reroll", on_click=reroll, width="stretch", icon=":material/casino:",
+                  help="A new random seed: a new outcome")
+        st.toggle("Force full blackout", key=bind("full_blackout"), on_change=changed,
+                  args=("full_blackout", toggle_full_blackout),
+                  disabled=not crisis_running, help="Cut grid power to every zone (start a crisis first)")
+
+        st.html(style.label("Playback"))
+        s1, s2 = st.columns(2)
+        s1.button("Step 15 min", on_click=step_forward, width="stretch", icon=":material/skip_next:")
+        s2.button("Reset day", on_click=jump_to, args=(DEMO_START,), width="stretch", icon=":material/replay:",
+                  help="Back to noon, normal day, no crisis")
+        s1, s2 = st.columns(2, vertical_alignment="bottom")
+        s1.selectbox("Speed", list(SPEEDS), key=bind("speed"), on_change=changed, args=("speed",))
+        s2.toggle("Auto-pause", key=bind("auto_pause"), on_change=changed, args=("auto_pause",),
+                  help="Stop playing on each new event")
+
+        st.html(style.label("Display"))
+        st.toggle("Map legend", key=bind("show_legend"), on_change=changed, args=("show_legend",))
+        st.toggle("Data tables (charge over the day, every battery)", key=bind("show_details"),
+                  on_change=changed, args=("show_details",))
+    speed = st.session_state.speed
+    pause_on_events = st.session_state.auto_pause
 
 # While playing, pop up each new event and (optionally) pause so the presenter can talk
 if st.session_state.playing and new_events:
@@ -539,42 +584,40 @@ if st.session_state.playing and new_events:
         st.session_state.pause_note = " ".join(msg for _, msg in new_events)
         st.rerun()                           # redraw so the button says Play again
 
-# --- Status bar: time, weather and event; the crisis (if any); wildfire risk (always) ---
+# --- Status line: time, weather and event; the crisis (if any); wildfire risk (always) ---
 row0 = current.iloc[0]
-status = [f"<b>{rules.clock(now)}</b>", f"{rules.temp(row0['outdoor_temp_c'])}"]
-if row0["stress_event"]:
-    status.append(row0["event_name"])
+left_parts = [f'<span class="time">{rules.clock(now)}</span>',
+              f'<span class="muted">{rules.temp(row0["outdoor_temp_c"])}</span>']
+if row0["stress_event"] and not (the_crisis and hour_now >= the_crisis["triggered_at"]):
+    left_parts.append(style.tag(row0["event_name"], "amber"))
 if the_crisis and hour_now >= the_crisis["triggered_at"]:
     c = the_crisis
-    status += [f'<b>{c["name"]}</b> ' + style.severity_dots(c["severity"]) + f' {c["severity_name"]}',
-               f'Forecast {c["warning_hours"]} h ahead' if c["forecastable"] else "No warning"]
     if hour_now >= c.get("ended_at", 99) or hour_now >= c["end_hour"]:
-        status.append(f'Over since {rules._hour_clock(min(c.get("ended_at", 99), c["end_hour"]))}')
+        when = f'over since {rules._hour_clock(min(c.get("ended_at", 99), c["end_hour"]))}'
     elif hour_now < c["start_hour"]:
-        status.append(f'Hits in {rules.hrs(c["start_hour"] - hour_now)} ({rules._hour_clock(c["start_hour"])}), '
-                      f'pre-charging')
+        when = f'hits in {rules.hrs(c["start_hour"] - hour_now)} · pre-charging'
     else:
-        status.append(f'{rules.hrs(hour_now - c["start_hour"])} since start ({rules._hour_clock(c["start_hour"])})')
+        when = f'{rules.hrs(hour_now - c["start_hour"])} since start'
+    left_parts.append(style.tag(c["name"], "red") + " " + style.severity_dots(c["severity"]))
+    left_parts.append(f'<span>{"Forecast" if c["forecastable"] else "No warning"} · {when}</span>')
     if any("full blackout" in o["cause"] for o in outages_now):
-        status.append("<b>Full blackout</b>")
-    status.append(f'<span class="muted">Seed {st.session_state.crisis_seed}</span>')
+        left_parts.append(style.tag("Full blackout", "dark"))
+    left_parts.append(f'<span class="muted">seed {st.session_state.crisis_seed}</span>')
 fire_zones = current.groupby("zone")["zone_fire_index"].first()
 fire_index = int(fire_zones.max())
-fire_html = (style.fire_pill(crisis.risk_level(fire_index))
-             + f'<span class="muted">{fire_index}/100 · {fire_zones.idxmax()}</span>')
+right_parts = [style.fire_pill(crisis.risk_level(fire_index)),
+               f'<span class="muted">{fire_index}/100 · {rules.zone_short(fire_zones.idxmax())}</span>']
 crisis_live = bool(the_crisis and the_crisis["start_hour"] <= hour_now < the_crisis["end_hour"]
                    and hour_now < the_crisis.get("ended_at", 99))
-status_slot.html(style.status_bar(" · ".join(status), fire_html,
-                                  crisis=bool(the_crisis and hour_now >= the_crisis["triggered_at"]))
-                 + (style.MAP_PULSE_CSS if crisis_live else ""))
+st.html(style.status_line(left_parts, right_parts) + (style.MAP_PULSE_CSS if crisis_live else ""))
 
 # The pause message gets a slot that's always on the page (empty when not paused), so
 # the map below never shifts position. A shift would make Streamlit rebuild the map.
 pause_slot = st.empty()
 if st.session_state.pause_note:
-    pause_slot.info(f"**Paused at {rules.clock(now)}.** {st.session_state.pause_note}")
+    pause_slot.info(f"**Paused at {rules.clock(now)}.** {st.session_state.pause_note}", icon=":material/pause_circle:")
 
-# --- Four key numbers ---
+# --- Four metric cards ---
 on_battery = int(current["zone"].isin(dark_zones).sum())
 medical_risk = {x["battery_id"] for z in blackout for x in z["runtimes"] if x["household_type"] == "medical"
                 and (x["runs_out"] or x["hours"] is None or x["hours"] <= 0.01 or x["short_kw"] > 0.05)}
@@ -583,19 +626,22 @@ medical_risk |= set(results[(results["household_type"] == "medical")
 if blackout:                                 # shortest time left among homes without grid power
     running = [x for z in blackout for x in z["runtimes"] if x["hours"] and x["hours"] > 0.01]
     shortest = min(running, key=lambda x: x["hours"]) if running else None
-    shortest_cap = "shortest left"
+    shortest_label = "Shortest time left"
 else:                                        # no outage: shortest backup if the grid failed now
     running = [{"home_id": "HOME-" + b[4:], "hours": h} for b, h in hours_left.items() if h and h > 0.01]
     shortest = min(running, key=lambda x: x["hours"]) if running else None
-    shortest_cap = "shortest backup"
-st.html(style.stats([
-    (on_battery, "homes on battery", on_battery > 0),
-    (f"{len(dark_zones)} of {len(simulator.ZONES)}", "zones dark", bool(dark_zones)),
-    (len(medical_risk), "medical home at risk" if len(medical_risk) == 1 else "medical homes at risk",
-     bool(medical_risk)),
-    (rules.hrs(shortest["hours"]) if shortest else "-",
-     shortest_cap + (f" · Home {int(shortest['home_id'][5:])}" if shortest else ""),
-     bool(shortest and shortest["hours"] < 2)),
+    shortest_label = "Shortest backup"
+dark_names = ", ".join(sorted(rules.zone_short(z) for z in dark_zones))
+medical_names = ", ".join(f"Home {int(b[4:])}" for b in sorted(medical_risk))
+st.html(style.metrics([
+    ("Homes on battery", on_battery, "no grid power" if on_battery else "all on the grid",
+     "alarm" if on_battery else ""),
+    ("Zones dark", f"{len(dark_zones)}/{len(simulator.ZONES)}", dark_names or "none",
+     "alarm" if dark_zones else ""),
+    ("Medical at risk", len(medical_risk), medical_names or "none", "alarm" if medical_risk else ""),
+    (shortest_label, rules.hrs(shortest["hours"]) if shortest else "-",
+     f"Home {int(shortest['home_id'][5:])}" if shortest else "",
+     "alarm" if shortest and shortest["hours"] < 2 else "dark"),
 ]))
 
 # ===========================================================================
@@ -622,18 +668,18 @@ with left, st.container(key="panel_map"):
         state = ("Strained" if stress >= rules.STRAINED_GRID
                  else "Busy" if stress >= rules.BUSY_GRID else "OK")
         fill = style.rgb(style.ZONE_HEX[state], {"Strained": 32, "Busy": 38, "OK": 26}[state])
-        label = f"{name}: {stress:.0f}%"
+        label = f"{rules.zone_short(name)}: {stress:.0f}%"
         title = f"{name} · {stress:.0f}% of capacity"
         line1 = f"{state} · wildfire risk {fire_level.lower()}"
         if fire_level in ("High", "Extreme"):
             label += f" · fire {fire_level.lower()}"
         dark = next((o for o in outages_now if o["zone"] == name), None)
         if dark:                                # crisis blackout: no grid power here
-            fill, label = style.rgb(style.DARK_ZONE_HEX, 120), f"{name}: no power"
+            fill, label = style.rgb(style.DARK_ZONE_HEX, 120), f"{rules.zone_short(name)}: no power"
             title = f"{name} · no grid power"
             line1 = "Power back " + (f"~{rules._hour_clock(dark['end'])}" if dark["end"] < 24 else "after midnight")
         elif name in shut_off_now:                # precautionary shutoff approved: zone is dark
-            fill, label = style.rgb(style.DARK_ZONE_HEX, 120), f"{name}: shut off"
+            fill, label = style.rgb(style.DARK_ZONE_HEX, 120), f"{rules.zone_short(name)}: shut off"
             title, line1 = f"{name} · shut off", "Precautionary shutoff (wildfire)"
         elif name in forecast_out:
             label += f"\nOutage ~{rules._hour_clock(forecast_out[name])}"   # second line
@@ -751,20 +797,19 @@ with left, st.container(key="panel_map"):
     st.html('<div class="map-credit">Map data © OpenStreetMap contributors · © CARTO</div>')
 
     # Legend: what every color and shape means
-    st.html(style.legend(dark=bool(dark_zones), forecast=bool(forecast_out)))
+    if st.session_state.show_legend:
+        st.html(style.legend(dark=bool(dark_zones), forecast=bool(forecast_out)))
     map_gestures.install()   # mouse wheel zooms; trackpad: two-finger slide moves, pinch zooms
 
 with right, st.container(key="panel_side"):
-    # --- What to do now: the outlook and the recommended actions, written by the rules ---
+    # --- Next steps: the dispatcher's to-do list, a few short lines, most urgent first ---
     approved_now = {(zone, n) for t, zone, n in st.session_state.approved if t == now}
     dark_approved_now = {(zone, n) for zone, start, n in st.session_state.dark_approved
                          if any(o["zone"] == zone and o["start"] == start for o in dark_now)}
-    brief = rules.summary(readings, now, results.to_dict("records"), approved_now,
-                          shutoff_approved=bool(fire_plan and fire_plan["zone"] in shut_off_now),
-                          blackout=blackout, dark_approved=dark_approved_now)
-    st.html(style.label("What to do") + style.pill(brief["level"]))
-    # ("1)" at the start of a line would turn into a numbered list, so it's escaped)
-    st.markdown(f"{brief['outlook']}  \n{brief['action'].replace('**Recommended:** ', '').replace('1) ', '1\\) ', 1)}")
+    todo, more = rules.next_steps(readings, now, results.to_dict("records"), approved_now,
+                                  blackout=blackout, dark_approved=dark_approved_now,
+                                  shutoff_approved=bool(fire_plan and fire_plan["zone"] in shut_off_now))
+    st.html(style.label("Next steps") + style.steps_list(todo, more))
 
     # A click on a dark zone on the map opens the Outage zone tab on that zone
     if blackout:
@@ -843,9 +888,9 @@ with right, st.container(key="panel_side"):
                 square = ('<span style="display:inline-block;width:12px;height:12px;border-radius:2px;'
                           'margin-right:8px;background:{}"></span>')
                 if zone in dark_zones:      # no grid power: nothing flows (see Outage zone)
-                    lines.append(f'<div>{square.format(style.DARK_ZONE_HEX)}<b>no grid</b> · {zone}</div>')
+                    lines.append(f'<div>{square.format(style.DARK_ZONE_HEX)}<b>no grid</b> · {rules.zone_short(zone)}</div>')
                     continue
-                lines.append(f'<div>{square.format(ZONE_DOT[state])}<b>{z["zone_stress"]:.0f}%</b> · {zone} '
+                lines.append(f'<div>{square.format(ZONE_DOT[state])}<b>{z["zone_stress"]:.0f}%</b> · {rules.zone_short(zone)} '
                              f'<span style="opacity:.65">· {z["zone_load_kw"]:.0f}/{z["zone_capacity_kw"]:.0f} kW</span></div>')
             st.html('<div style="font-size:15px;line-height:1.9;margin-bottom:6px">' + "".join(lines) + "</div>")
 
@@ -861,7 +906,7 @@ with right, st.container(key="panel_side"):
             for i, plan in enumerate(plans):
                 zone = plan["zone"]
                 approved_kw = sum(s["kw"] for s in plan["steps"] if (now, zone, s["number"]) in st.session_state.approved)
-                label = f"{plan['stress']:.0f}% · {zone} · needs {plan['needed_kw']:.0f} kW"
+                label = f"{plan['stress']:.0f}% · {rules.zone_short(zone)} · needs {plan['needed_kw']:.0f} kW"
                 with st.expander(label, expanded=(i == 0)):
                     st.markdown(f"**{approved_kw:.0f} of {plan['needed_kw']:.0f} kW** approved → "
                                 f"**{rules.stress_after(plan['load_kw'], plan['capacity_kw'], approved_kw):.0f}%**")
@@ -920,6 +965,7 @@ with right, st.container(key="panel_side"):
                     f'outage zones here.</p>')
         else:
             st.selectbox("Outage zone", names, key="dark_zone_pick", label_visibility="collapsed",
+                         format_func=rules.zone_short,
                          help="Or click a dark zone on the map")
             z = next(z for z in blackout if z["zone"] == st.session_state.dark_zone_pick)
             rows = []
@@ -942,15 +988,16 @@ with right, st.container(key="panel_side"):
             off = len([x for x in z["runtimes"] if x["tripped"]])
             first = min(running, key=lambda x: x["hours"]) if running else None
             back = f"~{rules._hour_clock(z['end'])}" if z["end"] < 24 else "after midnight"
-            facts = [f"<b>{z['homes']}</b> homes",
-                     f"<b>{sum(x['charge_pct'] for x in known) / len(known):.0f}%</b> average" if known else "",
-                     (f"<b>{rules.hrs(first['hours'])}</b> to first empty (Home {int(first['home_id'][5:])})"
-                      if first else "")
-                     + (f", {out} empty" if out else "") + (f", {off} off" if off else ""),
-                     f"power back {back}"]
-            st.html(style.zone_battery_list(" · ".join(f for f in facts if f), rows))
+            facts = [style.tag(f"{z['homes']} homes", "grey"),
+                     style.tag(f"{sum(x['charge_pct'] for x in known) / len(known):.0f}% avg", "grey") if known else "",
+                     style.tag(f"first empty {rules.hrs(first['hours'])} · Home {int(first['home_id'][5:])}",
+                               "red" if first["hours"] < 2 else "amber") if first else "",
+                     style.tag(f"{out} empty", "red") if out else "",
+                     style.tag(f"{off} off", "red") if off else "",
+                     style.tag(f"power back {back}", "mint")]
+            st.html(style.zone_battery_list("".join(f for f in facts if f), rows))
             # Recommended steps: nothing happens until the dispatcher approves
-            st.html(style.label("Steps") + "")
+            st.html(style.label("Steps"))
             for s in z["steps"]:
                 key = (z["zone"], z["start"], s["number"])
                 text_col, button_col = st.columns([4, 1.3], vertical_alignment="center")
@@ -969,87 +1016,86 @@ with right, st.container(key="panel_side"):
         normal_day()
 
 # --- Everything else, folded away so the main view stays clean ---
-with st.expander("More details: charge over the day, every battery, whose power can wait"):
-    # --- Chart: fleet charge over the day ---
-    st.subheader("Average fleet charge over the day")
-    over_time = data.groupby("time", as_index=False)["charge_pct"].mean()
-    over_time["clock"] = over_time["time"].str[11:]   # "16:30" instead of the full date
-    chart = alt.Chart(over_time).mark_line().encode(
-        x=alt.X("clock", title="Time", axis=alt.Axis(values=[t for t in over_time["clock"] if t.endswith(":00")])),
-        y=alt.Y("charge_pct", title="Average charge (%)", scale=alt.Scale(domain=[0, 100])),
-        tooltip=["clock", alt.Tooltip("charge_pct", format=".0f", title="Charge %")],
-    )
-    # A dot showing the time picked on the slider
-    marker = alt.Chart(over_time[over_time["time"] == now]).mark_point(size=120, filled=True, color="red").encode(
-        x="clock", y="charge_pct",
-    )
-    st.altair_chart(chart + marker, width="stretch")
-    st.caption(f"Batteries fill up on cheap midday solar, then drain during the "
-               f"{EVENT['name'].lower()} ({rules.clock(f'2026-10-17 {EVENT['start_hour']:02d}:00')}–"
-               f"{rules.clock(f'2026-10-17 {EVENT['end_hour']:02d}:00')}).")
+if st.session_state.show_details:
+    with st.expander("Data tables: charge over the day, every battery, whose power can wait", expanded=True):
+        # --- Chart: fleet charge over the day ---
+        st.subheader("Average fleet charge over the day")
+        over_time = data.groupby("time", as_index=False)["charge_pct"].mean()
+        over_time["clock"] = over_time["time"].str[11:]   # "16:30" instead of the full date
+        chart = alt.Chart(over_time).mark_line().encode(
+            x=alt.X("clock", title="Time", axis=alt.Axis(values=[t for t in over_time["clock"] if t.endswith(":00")])),
+            y=alt.Y("charge_pct", title="Average charge (%)", scale=alt.Scale(domain=[0, 100])),
+            tooltip=["clock", alt.Tooltip("charge_pct", format=".0f", title="Charge %")],
+        )
+        # A dot showing the time picked on the slider
+        marker = alt.Chart(over_time[over_time["time"] == now]).mark_point(size=120, filled=True, color="red").encode(
+            x="clock", y="charge_pct",
+        )
+        st.altair_chart(chart + marker, width="stretch")
+        st.caption(f"Batteries fill up on cheap midday solar, then drain during the "
+                   f"{EVENT['name'].lower()} ({rules.clock(f'2026-10-17 {EVENT['start_hour']:02d}:00')}–"
+                   f"{rules.clock(f'2026-10-17 {EVENT['end_hour']:02d}:00')}).")
 
-    # --- Table: every battery right now, most urgent first ---
-    st.subheader(f"All batteries at {now[11:]}")
-    table = current.merge(results[["battery_id", "category", "reason", "silent_guess", "wait_order"]], on="battery_id")
-    table["severity"] = table["category"].map(SEVERITY)
-    table = table.sort_values(["severity", "battery_id"])
-    table["category"] = table["category"].map(ICONS)
-    table["battery_status"] = table["battery_status"].fillna("no signal")
-    table["silent_guess"] = table["silent_guess"].fillna("")
-    if COUNTRY["temperature_unit"] == "F":     # show temperatures the way this country does
-        table["inverter_temp_c"] = (table["inverter_temp_c"] * 9 / 5 + 32).round(1)
-    table = table[[
-        "category", "battery_id", "reason", "silent_guess", "household_type", "priority", "zone",
-        "battery_status", "charge_pct", "battery_kw", "inverter_temp_c", "home_usage_kw", "from_grid_kw",
-    ]].rename(columns={
-        "category": "Category",
-        "battery_id": "Battery",
-        "reason": "Why",
-        "silent_guess": "Silent: best guess",
-        "household_type": "Household",
-        "priority": "Priority",
-        "zone": "Zone",
-        "battery_status": "Status",
-        "charge_pct": "Charge %",
-        "battery_kw": "Battery kW",
-        "inverter_temp_c": f"Temp °{COUNTRY['temperature_unit']}",
-        "home_usage_kw": "Home uses kW",
-        "from_grid_kw": "From grid kW",
-    })
-    st.dataframe(
-        table, hide_index=True, width="stretch", height=600,
-        column_config={"Why": st.column_config.TextColumn(width="large")},
-    )
-
-    # --- Waiting list: whose power can wait, in order ---
-    st.subheader("Whose power can wait")
-    st.caption("If the grid needs relief, ask homes to wait in this order: flexible loads first, "
-               "critical homes last. Batteries that need the dispatcher are left out.")
-    waiting = pd.DataFrame(rules.waiting_list(results.to_dict("records")))
-    waiting = waiting.merge(current[["battery_id", "home_usage_kw"]], on="battery_id")
-
-    # How much power each group could free up
-    SHORT_LABEL = {1: "1 · Waits first", 2: "2 · Waits if needed", 3: "3 · Waits late", 4: "4 · Protect last"}
-    groups = waiting.groupby("wait_order", as_index=False).agg(
-        homes=("battery_id", "count"), total_kw=("home_usage_kw", "sum"))
-    cols = st.columns(len(groups))
-    for col, (_, g) in zip(cols, groups.iterrows()):
-        col.metric(f"{SHORT_LABEL[g['wait_order']]} ({int(g['homes'])} homes)", f"{g['total_kw']:.0f} kW")
-
-    waiting["category"] = waiting["category"].map(ICONS)
-    st.dataframe(
-        waiting[["wait_label", "battery_id", "household_type", "zone", "home_usage_kw", "category"]].rename(columns={
-            "wait_label": "Wait order",
-            "battery_id": "Battery",
-            "household_type": "Household",
-            "zone": "Zone",
-            "home_usage_kw": "Home uses kW",
+        # --- Table: every battery right now, most urgent first ---
+        st.subheader(f"All batteries at {now[11:]}")
+        table = current.merge(results[["battery_id", "category", "reason", "silent_guess", "wait_order"]], on="battery_id")
+        table["severity"] = table["category"].map(SEVERITY)
+        table = table.sort_values(["severity", "battery_id"])
+        table["category"] = table["category"].map(ICONS)
+        table["battery_status"] = table["battery_status"].fillna("no signal")
+        table["silent_guess"] = table["silent_guess"].fillna("")
+        if COUNTRY["temperature_unit"] == "F":     # show temperatures the way this country does
+            table["inverter_temp_c"] = (table["inverter_temp_c"] * 9 / 5 + 32).round(1)
+        table = table[[
+            "category", "battery_id", "reason", "silent_guess", "household_type", "priority", "zone",
+            "battery_status", "charge_pct", "battery_kw", "inverter_temp_c", "home_usage_kw", "from_grid_kw",
+        ]].rename(columns={
             "category": "Category",
-        }),
-        hide_index=True, width="stretch", height=400,
-    )
+            "battery_id": "Battery",
+            "reason": "Why",
+            "silent_guess": "Silent: best guess",
+            "household_type": "Household",
+            "priority": "Priority",
+            "zone": "Zone",
+            "battery_status": "Status",
+            "charge_pct": "Charge %",
+            "battery_kw": "Battery kW",
+            "inverter_temp_c": f"Temp °{COUNTRY['temperature_unit']}",
+            "home_usage_kw": "Home uses kW",
+            "from_grid_kw": "From grid kW",
+        })
+        st.dataframe(
+            table, hide_index=True, width="stretch", height=600,
+            column_config={"Why": st.column_config.TextColumn(width="large")},
+        )
 
+        # --- Waiting list: whose power can wait, in order ---
+        st.subheader("Whose power can wait")
+        st.caption("If the grid needs relief, ask homes to wait in this order: flexible loads first, "
+                   "critical homes last. Batteries that need the dispatcher are left out.")
+        waiting = pd.DataFrame(rules.waiting_list(results.to_dict("records")))
+        waiting = waiting.merge(current[["battery_id", "home_usage_kw"]], on="battery_id")
 
+        # How much power each group could free up
+        SHORT_LABEL = {1: "1 · Waits first", 2: "2 · Waits if needed", 3: "3 · Waits late", 4: "4 · Protect last"}
+        groups = waiting.groupby("wait_order", as_index=False).agg(
+            homes=("battery_id", "count"), total_kw=("home_usage_kw", "sum"))
+        cols = st.columns(len(groups))
+        for col, (_, g) in zip(cols, groups.iterrows()):
+            col.metric(f"{SHORT_LABEL[g['wait_order']]} ({int(g['homes'])} homes)", f"{g['total_kw']:.0f} kW")
+
+        waiting["category"] = waiting["category"].map(ICONS)
+        st.dataframe(
+            waiting[["wait_label", "battery_id", "household_type", "zone", "home_usage_kw", "category"]].rename(columns={
+                "wait_label": "Wait order",
+                "battery_id": "Battery",
+                "household_type": "Household",
+                "zone": "Zone",
+                "home_usage_kw": "Home uses kW",
+                "category": "Category",
+            }),
+            hide_index=True, width="stretch", height=400,
+        )
 
 # --- Footer: where each kind of data comes from (real or simulated), and the credits ---
 weather_day = weather.typical_day(country_id, month)

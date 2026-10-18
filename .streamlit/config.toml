@@ -1,39 +1,41 @@
 # Look and feel of the dashboard.
-# Style: off-white page, clean white rounded panels, ONE coral-red accent used
-# sparingly (headings, key numbers, urgent alerts), simple sans-serif type, lots of
-# space. Built for a projector: large base font and strong contrast.
+# Style: minimal and calm. Light grey page, white cards with thin 1 px borders, small
+# corners, deep forest-green ink and buttons, a soft mint accent, and small monospace
+# uppercase labels. Red is kept for alarms only. Readable on a projector.
 
 [theme]
 base = "light"
-# Fonts picked to match the reference look (closest free Google Fonts):
-#   body text and big numbers: Inter Tight, a tight Helvetica-style grotesk
-#   headings and the title:    Outfit, a geometric rounded sans
-font = "Inter Tight:https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800&display=swap"
-headingFont = "Outfit:https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&display=swap"
-baseFontSize = 18                    # readable from the back of the room
-baseRadius = "16px"                  # soft rounded corners on panels and widgets
-buttonRadius = "999px"               # pill-shaped buttons
-paddingTop = "1.5rem"
+# Fonts (free Google Fonts):
+#   body text:            Inter, a clean neutral sans
+#   headings and numbers: Hanken Grotesk, a crisp geometric grotesk
+#   labels and tags:      JetBrains Mono (small uppercase "tags" like SCENARIO)
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+headingFont = "Hanken Grotesk:https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@500;600;700;800&display=swap"
+codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600&display=swap"
+baseFontSize = 16                    # still readable from the back of the room
+baseRadius = "10px"                  # small corners
+buttonRadius = "8px"                 # rectangular buttons with a soft corner
+paddingTop = "1rem"
 
-backgroundColor = "#f2f1ef"          # off-white / light gray page
-secondaryBackgroundColor = "#ffffff" # panels and inputs are white
-textColor = "#1c1c1e"                # near-black ink
-borderColor = "#e4e2df"              # very light borders, barely there
-showWidgetBorder = false
-primaryColor = "#1c1c1e"             # controls stay ink-black: coral is saved for what matters
+backgroundColor = "#f5f6f3"          # light grey page
+secondaryBackgroundColor = "#ffffff" # cards and inputs are white
+textColor = "#0f2416"                # deep green-black ink
+borderColor = "#e3e6e0"              # thin borders
+showWidgetBorder = true
+primaryColor = "#123d1f"             # forest green: buttons, toggles, the slider
 
-# Status colors. Coral red is the accent AND "Needs dispatcher" (same as the map dots).
-redColor = "#e8453c"                 # Needs dispatcher / strained / accent
-yellowColor = "#e0a100"              # Watch
+# Status colors (the same as the map dots)
+redColor = "#e5484d"                 # Needs dispatcher / alarms
+yellowColor = "#d99a00"              # Watch
 blueColor = "#2f6fdb"                # Can wait
 greenColor = "#2e9e5b"               # Normal
 orangeColor = "#f08a24"              # busy zones
 violetColor = "#7b4fd6"              # medical homes
-redBackgroundColor = "#fdecea"
-yellowBackgroundColor = "#fdf5df"
+redBackgroundColor = "#fde8e8"
+yellowBackgroundColor = "#fdf3d8"
 blueBackgroundColor = "#e9f0fc"
-greenBackgroundColor = "#e8f5ee"
-chartCategoricalColors = ["#e8453c", "#2f6fdb", "#2e9e5b", "#e0a100", "#7b4fd6"]
+greenBackgroundColor = "#e3f6e0"
+chartCategoricalColors = ["#123d1f", "#2f6fdb", "#2e9e5b", "#d99a00", "#7b4fd6"]
 
 [client]
 toolbarMode = "minimal"              # hide the developer menu during the demo

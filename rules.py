@@ -730,6 +730,69 @@ def problem_and_action(r):
     return 3, f"{r['battery_id']} low backup", f"check on {who}: its backup is running low"
 
 
+def zone_short(name):
+    """'East Windsor Park' -> 'East', 'Trudering Ost' -> 'Ost': drop the words every zone
+    shares, so short texts stay short. (The region is shown once, in the header.)"""
+    common = set.intersection(*(set(z.split()) for z in simulator.ZONES))
+    return " ".join(w for w in name.split() if w not in common) or name
+
+
+# What to tell the dispatcher about a battery that needs them, in a few words
+SHORT_ACTION = {0: "tripped: check it's safe, then reset",
+                1: "probably broken: send a technician",
+                2: "running hot: ease its load",
+                3: "low backup: check on the home"}
+
+
+def next_steps(readings, at_time, results, approved_steps=(), blackout=(), dark_approved=(),
+               shutoff_approved=False, limit=3):
+    """
+    The dispatcher's to-do list in a few short lines (at most `limit`), most urgent first:
+      1. dark zones: their most urgent step (medical homes, then restore priority, ...)
+      2. strained zones: the next relief step to approve
+      3. strain coming soon: let batteries charge first
+      4. wildfire risk High/Extreme: consider a precautionary shutoff
+      5. batteries that need the dispatcher
+    Returns (lines, how many more were left out). Lines are short HTML (zone in bold).
+    """
+    items = []
+    urgency = {3: 0, 4: 1, 2: 2, 1: 3}
+    for z in blackout:
+        todo = sorted([s for s in z["steps"] if s["needed"] and (z["zone"], s["number"]) not in dark_approved],
+                      key=lambda s: urgency[s["number"]])
+        if todo:
+            items.append(f"<b>{zone_short(z['zone'])}</b> · {todo[0]['title'].lower()}")
+    dark = {z["zone"] for z in blackout}
+    plans = [p for p in relief_plans(readings, at_time) if p["zone"] not in dark]
+    for plan in plans:
+        short = zone_short(plan["zone"])
+        todo = [s for s in plan["steps"] if s["needed"] and (plan["zone"], s["number"]) not in approved_steps]
+        if todo:
+            items.append(f"<b>{short}</b> · approve: {todo[0]['title'].lower()} ({todo[0]['kw']:.0f} kW)")
+        elif plan["shortfall_kw"] > 0:
+            items.append(f"<b>{short}</b> · {plan['shortfall_kw']:.0f} kW short after all steps: call the utility")
+    if not plans:
+        # Strain coming in the next few hours? Then batteries there should be full by then.
+        times = sorted({r["time"] for r in readings if r["time"] > at_time})
+        ahead = times[:LOOKAHEAD_HOURS * 60 // simulator.STEP_MINUTES]
+        first = None
+        for r in readings:
+            if r["time"] in ahead and r["zone"] not in dark and r["zone_stress"] >= STRAINED_GRID:
+                if first is None or r["time"] < first[1]:
+                    first = (r["zone"], r["time"])
+        if first:
+            items.append(f"<b>{zone_short(first[0])}</b> · strain from {clock(first[1])}: let batteries charge")
+    fire = shutoff_plan(readings, at_time)
+    if fire and not shutoff_approved and fire["zone"] not in dark:
+        items.append(f"<b>{zone_short(fire['zone'])}</b> · wildfire {fire['level'].lower()}: "
+                     f"consider a precautionary shutoff")
+    needs = sorted([r for r in results if r["category"] == NEEDS_DISPATCHER],
+                   key=lambda r: (problem_and_action(r)[0], -r["wait_order"], r["battery_id"]))
+    for r in needs:
+        items.append(f"<b>Home {int(r['battery_id'][4:])}</b> · {SHORT_ACTION[problem_and_action(r)[0]]}")
+    return items[:limit], max(0, len(items) - limit)
+
+
 def summary(readings, at_time, results, approved_steps=(), shutoff_approved=False, blackout=(),
             dark_approved=()):
     """

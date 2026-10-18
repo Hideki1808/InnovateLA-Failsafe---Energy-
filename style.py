@@ -1,12 +1,13 @@
 """
 style.py - the dashboard's look: colors, a little CSS, and small HTML helpers.
 
-The theme itself (background, fonts, rounded corners, status colors) lives in
-.streamlit/config.toml. This file only adds what the theme can't do: small uppercase
-section labels, big "key number" cards, white rounded panels, and the alert list.
+The theme itself (background, fonts, corners, status colors) lives in
+.streamlit/config.toml. This file only adds what the theme can't do: the slim header,
+metric cards, small monospace tags, one-line tables and the legend.
 
-Look: off-white page, white rounded panels, ONE coral-red accent used sparingly
-(headings, key numbers, urgent alerts), plenty of space. Built for a projector.
+Look: minimal and calm. Light grey page, white cards with thin borders, deep forest-green
+ink and buttons, a soft mint accent, small monospace uppercase labels. Red is for alarms
+only. Built for a projector.
 """
 
 from html import escape
@@ -16,34 +17,49 @@ import rules
 # ---------------------------------------------------------------------------
 # Colors (keep in step with .streamlit/config.toml)
 # ---------------------------------------------------------------------------
-CORAL = "#e8453c"        # the accent, and "Needs dispatcher"
-FONT = "Inter Tight, Helvetica Neue, Arial, sans-serif"   # same as the theme's body font
-INK = "#1c1c1e"          # text
-MUTED = "#6f6b67"        # captions and labels
-PAGE = "#f2f1ef"         # page background
-LINE = "#e4e2df"         # hairlines
+FOREST = "#123d1f"       # the brand: buttons, title, the selected tab
+MINT = "#d4f5cf"         # soft accent tint
+MINT_INK = "#1d6b2c"     # text on mint
+CORAL = "#e5484d"        # alarms only: "Needs dispatcher", outages, the crisis
+FONT = "Inter, Helvetica Neue, Arial, sans-serif"   # same as the theme's body font
+HEAD = '"Hanken Grotesk", Inter, sans-serif'        # headings and big numbers
+MONO = '"JetBrains Mono", ui-monospace, monospace'   # small uppercase tags
+INK = "#0f2416"          # text
+MUTED = "#6b7069"        # captions and labels
+PAGE = "#f5f6f3"         # page background
+LINE = "#e3e6e0"         # thin borders
 
 
 def rgb(hex_color, alpha=None):
-    """'#e8453c' -> [232, 69, 60] (plus alpha if given), for the map."""
+    """'#e5484d' -> [229, 72, 77] (plus alpha if given), for the map."""
     h = hex_color.lstrip("#")
     values = [int(h[i:i + 2], 16) for i in (0, 2, 4)]
     return values + [alpha] if alpha is not None else values
 
 
 # Battery state colors: the same on the map, in the alerts and in the legend.
-# Red means "Needs dispatcher" and nothing else; the others are far apart in hue.
+# Red means "Needs dispatcher" (and, in dark zones, a nearly empty battery).
 STATE_HEX = {
-    rules.NEEDS_DISPATCHER: CORAL,       # coral red
-    rules.WATCH: "#e0a100",              # amber
+    rules.NEEDS_DISPATCHER: CORAL,       # red
+    rules.WATCH: "#d99a00",              # amber
     rules.CAN_WAIT: "#2f6fdb",           # blue
     rules.NORMAL: "#2e9e5b",             # green
 }
 # Household rings: kept away from the state colors so they never look like a state
-RING_HEX = {"vulnerable": "#1c1c1e", "medical": "#7b4fd6"}   # thin ink ring, thick violet ring
-BUILDING_HEX = "#4a4f5a"                                     # dark slate squares
-ZONE_HEX = {"OK": "#9aa3ad", "Busy": "#f08a24", "Strained": CORAL}
-DARK_ZONE_HEX = "#6f6b67"   # a zone without grid power: shaded gray
+RING_HEX = {"vulnerable": "#0f2416", "medical": "#7b4fd6"}   # thin ink ring, thick violet ring
+BUILDING_HEX = "#3d4a41"                                     # dark slate-green squares
+ZONE_HEX = {"OK": "#9aa39c", "Busy": "#f08a24", "Strained": CORAL}
+DARK_ZONE_HEX = "#5f655e"   # a zone without grid power: shaded grey
+
+# Tag colors: (background, text)
+TAG = {
+    "mint": (MINT, MINT_INK),
+    "red": ("#fde2e2", "#b42318"),
+    "amber": ("#fdf3d8", "#8a6100"),
+    "grey": ("#eef0ec", "#4b5148"),
+    "dark": (FOREST, "#ffffff"),
+    "violet": ("#efe8fc", "#5b34b5"),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -54,112 +70,123 @@ CSS = f"""
   /* No grey-out while the page redraws (every step of Play), so nothing flickers */
   [data-stale='true'] {{ opacity: 1 !important; transition: none !important; }}
 
-  /* Small uppercase section labels, like "WHAT'S HAPPENING" */
-  .lbl {{ font-size: .78rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase;
-          color: {MUTED}; margin: 0 0 .5rem 0; }}
+  /* Page spacing: compact, so the map fits on a 720 px projector */
+  [data-testid="stMainBlockContainer"] {{ padding-top: 1rem; padding-bottom: 1.2rem; }}
+  [data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] {{ gap: .65rem; }}
 
-  /* The big coral title */
-  .brand {{ font-family: "Outfit", "Inter Tight", sans-serif; font-size: 1.9rem; font-weight: 700;
-            color: {CORAL}; letter-spacing: -.03em;
-            line-height: 1.05; margin: 0; }}
-  .brand .region {{ font-family: "Inter Tight", sans-serif; font-size: .8rem; font-weight: 600;
-                    letter-spacing: .14em; text-transform: uppercase; color: {MUTED}; margin-left: .9rem; }}
+  /* White cards with a thin border (Streamlit containers created with key="panel_...") */
+  [class*="st-key-panel_"] {{ background: #fff; border: 1px solid {LINE}; border-radius: 12px;
+                              padding: 1rem 1.1rem; }}
+  .st-key-panel_top {{ padding: .55rem 1rem !important; }}
+  .st-key-panel_map {{ padding: .6rem !important; }}
 
-  /* Less empty space above the page, so the map fits on a 720 px projector */
-  [data-testid="stMainBlockContainer"] {{ padding-top: 1.2rem; padding-bottom: 1.5rem; }}
-  .st-key-panel_top {{ padding: .7rem 1.1rem !important; gap: .55rem; }}
-  .st-key-panel_top [data-baseweb="select"] div, .st-key-panel_top input,
-  .st-key-panel_top button p, .st-key-panel_top label p,
-  .st-key-panel_top [data-testid="stMarkdownContainer"] p {{ font-size: .88rem; white-space: nowrap; }}
-  .st-key-panel_top .status-bar {{ background: #f6f5f3; margin: 0; padding: .4rem .9rem; }}
-  [data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] {{ gap: .55rem; }}
-  .st-key-panel_map {{ padding: 1rem !important; }}
+  /* Small monospace uppercase labels and tags, like "NEXT STEPS" */
+  .lbl {{ font-family: {MONO}; font-size: .68rem; font-weight: 600; letter-spacing: .08em;
+          text-transform: uppercase; color: {MUTED}; margin: 0 0 .45rem 0; }}
+  .tag {{ display: inline-block; font-family: {MONO}; font-size: .66rem; font-weight: 600;
+          letter-spacing: .06em; text-transform: uppercase; padding: .16rem .45rem;
+          border-radius: 4px; line-height: 1.4; vertical-align: 1px; white-space: nowrap; }}
 
-  /* Key numbers: very large number, short caption underneath */
-  .stats {{ display: grid; grid-template-columns: repeat(var(--n), 1fr); gap: 1.5rem;
-            background: #fff; border-radius: 20px; padding: .8rem 1.6rem; }}
-  .stat .num {{ font-size: 2.4rem; font-weight: 800; color: {CORAL}; line-height: 1;
-                letter-spacing: -.04em; white-space: nowrap; }}
+  /* The header: logo mark, name and region tag */
+  .brand {{ display: flex; align-items: center; gap: .55rem; margin: 0; white-space: nowrap; }}
+  .brand .mark {{ width: 22px; height: 22px; border-radius: 5px; background: {FOREST};
+                  position: relative; flex: none; }}
+  .brand .mark::after {{ content: ""; position: absolute; left: 6px; top: 5px; width: 4px; height: 12px;
+                         background: {MINT}; border-radius: 1px; box-shadow: 6px 4px 0 -0px {MINT}; }}
+  .brand .name {{ font-family: {HEAD}; font-size: 1.15rem; font-weight: 700; color: {INK};
+                  letter-spacing: -.01em; }}
+  .st-key-panel_top [data-testid="stMarkdownContainer"] p {{ white-space: nowrap; }}
+
+  /* The status line: time, weather, crisis and wildfire risk as one quiet row of tags */
+  .status {{ display: flex; align-items: center; gap: .55rem; flex-wrap: wrap; font-size: .9rem;
+             color: {INK}; padding: .1rem .2rem; }}
+  .status .time {{ font-family: {HEAD}; font-weight: 700; font-size: 1.05rem; }}
+  .status .sep {{ width: 1px; height: 14px; background: {LINE}; }}
+  .status .muted {{ color: {MUTED}; }}
+  .status .right {{ margin-left: auto; display: flex; gap: .45rem; align-items: center; }}
+  .sev {{ color: {CORAL}; letter-spacing: .06em; font-size: .8rem; }}
+
+  /* Metric cards: a small label on top, one big number, a short note */
+  .metrics {{ display: grid; grid-template-columns: repeat(var(--n), 1fr); gap: .65rem; }}
+  .metric {{ background: #fff; border: 1px solid {LINE}; border-radius: 12px; padding: .7rem 1rem; }}
+  .metric .k {{ font-family: {MONO}; font-size: .66rem; font-weight: 600; letter-spacing: .08em;
+                text-transform: uppercase; color: {MUTED}; }}
+  .metric .v {{ font-family: {HEAD}; font-size: 2rem; font-weight: 700; line-height: 1.1;
+                letter-spacing: -.02em; color: {INK}; margin-top: .2rem; white-space: nowrap; }}
+  .metric .s {{ font-size: .8rem; color: {MUTED}; white-space: nowrap; overflow: hidden;
+                text-overflow: ellipsis; min-height: 1.1em; }}
+  .metric.alarm {{ border-color: #f6c9ca; }}
+  .metric.alarm .v {{ color: {CORAL}; }}
+  .metric.dark {{ background: {FOREST}; border-color: {FOREST}; }}
+  .metric.dark .k, .metric.dark .s {{ color: {MINT}; }}
+  .metric.dark .v {{ color: #fff; }}
+
+  /* Older key-number row (used by the Normal day tab) */
+  .stats {{ display: grid; grid-template-columns: repeat(var(--n), 1fr); gap: 1rem; margin-bottom: .4rem; }}
+  .stat .num {{ font-family: {HEAD}; font-size: 1.7rem; font-weight: 700; color: {FOREST}; line-height: 1;
+                white-space: nowrap; }}
   .stat .num.ink {{ color: {INK}; }}
-  .stat .cap {{ font-size: .95rem; color: {MUTED}; margin-top: .35rem; line-height: 1.25;
-                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+  .stat .cap {{ font-size: .8rem; color: {MUTED}; margin-top: .3rem; }}
 
-  /* White rounded panels (Streamlit containers created with key="panel_...") */
-  [class*="st-key-panel_"] {{ background: #fff; border-radius: 20px; padding: 1.3rem 1.5rem; }}
+  /* Next steps: numbered one-liners */
+  .steps {{ margin: 0 !important; padding: 0 !important; list-style: none; }}
+  .steps li {{ margin: 0 !important; display: flex; gap: .6rem; align-items: baseline; padding: .4rem 0;
+               border-bottom: 1px solid {LINE}; font-size: .92rem; line-height: 1.35; }}
+  .steps li:last-child {{ border-bottom: none; }}
+  .steps .no {{ font-family: {MONO}; font-size: .68rem; font-weight: 600; color: #fff;
+                background: {FOREST}; border-radius: 4px; padding: .05rem .38rem; flex: none; }}
+  .steps .more {{ color: {MUTED}; font-size: .82rem; }}
 
-  /* Status pill at the top of the side panel */
-  .pill {{ display: inline-block; font-size: .75rem; font-weight: 700; letter-spacing: .12em;
-           text-transform: uppercase; padding: .25rem .7rem; border-radius: 999px; }}
+  /* One-line tables (alerts, outage zone): a header row, thin lines between rows */
+  .tbl {{ width: 100%; font-size: .88rem; }}
+  .tbl .tr {{ display: grid; grid-template-columns: var(--cols); gap: .5rem; align-items: center;
+              padding: .38rem .2rem; border-bottom: 1px solid {LINE}; }}
+  .tbl .th {{ font-family: {MONO}; font-size: .64rem; font-weight: 600; letter-spacing: .08em;
+              text-transform: uppercase; color: {MUTED}; padding-top: 0; }}
+  .tbl .tr span {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+  .tbl .n {{ font-weight: 600; }}
+  .tbl .m {{ color: {MUTED}; }}
+  .tbl .dot {{ display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: .45rem;
+               vertical-align: 1px; }}
+  .tbl .pin {{ box-shadow: inset 3px 0 0 var(--pin); }}
+  .tbl .scroll {{ max-height: 340px; overflow-y: auto; }}
+  .bar {{ height: 6px; background: #eceee9; border-radius: 3px; overflow: hidden; }}
+  .bar span {{ display: block; height: 100%; border-radius: 3px; }}
+  .facts {{ display: flex; gap: .45rem; flex-wrap: wrap; margin: .2rem 0 .55rem; }}
 
-  /* Alert list: a colored dot, the battery, then the reason. Hairlines between. */
-  .alert {{ display: grid; grid-template-columns: 16px 1fr; gap: .2rem .7rem;
-            padding: .75rem 0; border-bottom: 1px solid {LINE}; }}
-  .alert .dot {{ width: 12px; height: 12px; border-radius: 50%; margin-top: .45rem; }}
-  .alert .who {{ font-weight: 700; }}
-  .alert .meta {{ color: {MUTED}; font-weight: 400; }}
-  .alert .why {{ grid-column: 2; color: {INK}; font-size: .95rem; line-height: 1.4; }}
-
-  /* Data source tags: "Weather: real (...)" in green, "simulated" in grey, credit after */
-  .sources {{ margin: .55rem 0 .1rem .3rem; font-size: .8rem; line-height: 2; }}
-  .src {{ display: inline-block; padding: .1rem .65rem; border-radius: 999px; font-weight: 600;
-          margin-right: .45rem; }}
-  .credit {{ color: {MUTED}; margin-right: 1.3rem; }}
-
-  /* Status bar under the crisis controls: crisis banner (left), wildfire risk (right) */
-  .status-bar {{ display: flex; justify-content: space-between; align-items: center; gap: 1rem;
-                 flex-wrap: wrap; margin: .1rem 0 .5rem; padding: .5rem 1rem; background: #fff;
-                 border-radius: 14px; font-size: .95rem; line-height: 1.6; }}
-  .status-bar.crisis {{ border-left: 5px solid {CORAL}; }}
-  .status-bar .muted {{ color: {MUTED}; margin-left: .45rem; }}
-  .sev {{ color: {CORAL}; letter-spacing: .08em; }}
+  /* Footer: data sources and credits, small and quiet */
+  .sources {{ font-family: {MONO}; font-size: .66rem; color: {MUTED}; letter-spacing: .02em;
+              line-height: 2; margin-top: .3rem; }}
+  .src {{ display: inline-block; padding: .05rem .45rem; border-radius: 4px; margin-right: .3rem; }}
+  .credit {{ margin-right: 1.1rem; }}
 
   /* Map credits, pulled up into the map's bottom-left corner */
-  .map-credit {{ position: relative; top: -58px; z-index: 5; display: block; width: fit-content;
-                 margin: 0 0 -30px .6rem;
-                 padding: .1rem .55rem; border-radius: 8px; background: rgba(255,255,255,.85);
-                 color: {MUTED}; font-size: .72rem; pointer-events: none; }}
+  .map-credit {{ position: relative; top: -50px; z-index: 5; display: block; width: fit-content;
+                 margin: 0 0 -30px .5rem; padding: .1rem .5rem; border-radius: 4px;
+                 background: rgba(255,255,255,.88); color: {MUTED}; font-family: {MONO};
+                 font-size: .62rem; pointer-events: none; }}
 
-  /* Alerts: one line each */
-  .aline {{ display: flex; gap: .5rem; align-items: center; padding: .35rem .2rem; font-size: .9rem;
-            border-bottom: 1px solid {LINE}; white-space: nowrap; }}
-  .aline span {{ flex: none; }}
-  .aline .p {{ flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }}
-  .aline .v {{ font-weight: 600; }}
-  .aline .dot {{ width: 11px; height: 11px; border-radius: 50%; }}
-  .aline .n {{ font-weight: 700; }}
-  .aline .t {{ color: {MUTED}; }}
+  /* Legend under the map: one quiet line */
+  .legend {{ font-size: .76rem; color: {MUTED}; line-height: 1.9; padding: .1rem .3rem 0; }}
+  .legend b {{ font-family: {MONO}; font-weight: 600; font-size: .62rem; letter-spacing: .08em;
+               text-transform: uppercase; margin: 0 .3rem 0 .9rem; color: {INK}; }}
+  .legend b:first-child {{ margin-left: 0; }}
+  .sw {{ display: inline-block; width: 10px; height: 10px; vertical-align: -1px; margin: 0 .3rem 0 .55rem; }}
 
-  /* Dark zone battery list: one line per battery, with a small charge bar */
-  .zl-facts {{ font-size: .95rem; margin: .1rem 0 .5rem; }}
-  .zl {{ max-height: 330px; overflow-y: auto; }}
-  .zl-row {{ display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) 2.5em 3.4em 30px;
-             gap: .3rem; align-items: center; padding: .25rem .3rem; font-size: .8rem;
-             border-bottom: 1px solid {LINE}; border-left: 3px solid transparent; }}
-  .zl-row.medical {{ border-left-color: {RING_HEX["medical"]}; }}
-  .zl-row.building {{ border-left-color: {BUILDING_HEX}; }}
-  .zl-row span {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
-  .zl-row .t {{ color: {MUTED}; }}
-  .zl-row .n {{ font-weight: 600; }}
-  .zl-bar {{ height: 7px; background: #ece9e5; border-radius: 4px; overflow: hidden; }}
-  .zl-bar span {{ display: block; height: 100%; border-radius: 4px; }}
-
-  /* Legend under the map */
-  .legend {{ font-size: .85rem; color: {INK}; line-height: 2; }}
-  .legend b {{ font-weight: 600; color: {MUTED}; font-size: .78rem; letter-spacing: .12em;
-               text-transform: uppercase; margin-right: .4rem; }}
-  .sw {{ display: inline-block; width: 13px; height: 13px; vertical-align: -1px;
-         margin: 0 .4rem 0 1rem; }}
-
-  /* Tabs: plain, with a coral underline on the selected one */
-  [data-baseweb="tab-highlight"] {{ background-color: {CORAL} !important; }}
+  /* Tabs: plain, with a forest-green underline on the selected one */
+  [data-baseweb="tab-highlight"] {{ background-color: {FOREST} !important; }}
   [data-baseweb="tab-border"] {{ background-color: {LINE} !important; }}
-  button[role="tab"] p {{ font-size: 1rem; font-weight: 600; }}
+  button[role="tab"] p {{ font-size: .88rem; font-weight: 600; }}
+
+  /* Small pill (kept for the wildfire card) */
+  .pill {{ display: inline-block; font-family: {MONO}; font-size: .66rem; font-weight: 600;
+           letter-spacing: .06em; text-transform: uppercase; padding: .16rem .45rem; border-radius: 4px; }}
 
   /* The map-gesture helper frame (map_gestures.py) does its work invisibly */
   .st-key-gesture_helper {{ display: none !important; }}
 
-  /* Expanders inside panels: no heavy box */
-  [data-testid="stExpander"] details {{ border-color: {LINE}; border-radius: 14px; }}
+  /* Expanders: thin border, small corners */
+  [data-testid="stExpander"] details {{ border-color: {LINE}; border-radius: 10px; }}
 </style>
 """
 
@@ -168,15 +195,36 @@ CSS = f"""
 # HTML helpers
 # ---------------------------------------------------------------------------
 def label(text):
-    """A small uppercase section label."""
+    """A small monospace uppercase section label."""
     return f'<div class="lbl">{escape(text)}</div>'
 
 
+def tag(text, tone="grey"):
+    """A small monospace uppercase tag, e.g. tag("Medical", "violet")."""
+    bg, fg = TAG[tone]
+    return f'<span class="tag" style="background:{bg};color:{fg}">{escape(str(text))}</span>'
+
+
+def brand(name, region):
+    """The header: a small logo mark, the name and a region tag."""
+    return (f'<div class="brand"><span class="mark"></span><span class="name">{escape(name)}</span>'
+            f'{tag(region, "mint")}</div>')
+
+
+def metrics(items):
+    """
+    A row of metric cards. items = [(label, value, note, tone), ...]
+    tone: "" (plain), "alarm" (red number) or "dark" (forest-green card).
+    """
+    cards = "".join(
+        f'<div class="metric {tone}"><div class="k">{escape(k)}</div><div class="v">{escape(str(v))}</div>'
+        f'<div class="s">{escape(s)}</div></div>'
+        for k, v, s, tone in items)
+    return f'<div class="metrics" style="--n:{len(items)}">{cards}</div>'
+
+
 def stats(items):
-    """
-    A row of key numbers. items = [(number, caption, accent), ...]
-    accent=True draws the number in coral, False in ink.
-    """
+    """A row of key numbers (Normal day tab). items = [(number, caption, accent), ...]"""
     cells = "".join(
         f'<div class="stat"><div class="num{"" if accent else " ink"}">{escape(str(number))}</div>'
         f'<div class="cap">{escape(caption)}</div></div>'
@@ -185,40 +233,44 @@ def stats(items):
     return f'<div class="stats" style="--n:{len(items)}">{cells}</div>'
 
 
-PILL = {  # summary level -> (text, background, text color)
-    "error": ("Action needed", "#fdecea", CORAL),
-    "warning": ("Heads up", "#fdf5df", "#9a6b00"),
-    "ok": ("All clear", "#e8f5ee", "#1f7a45"),
+PILL = {  # summary level -> (text, tag tone)
+    "error": ("Action needed", "red"),
+    "warning": ("Heads up", "amber"),
+    "ok": ("All clear", "mint"),
 }
 
 
 def pill(level):
-    text, bg, fg = PILL[level]
-    return f'<span class="pill" style="background:{bg};color:{fg}">{text}</span>'
+    text, tone = PILL[level]
+    return tag(text, tone)
 
 
-FIRE_PILL = {  # wildfire risk level -> (background, text color)
-    "Extreme": (CORAL, "#ffffff"),
-    "High": ("#fdecea", CORAL),
-    "Moderate": ("#fdf5df", "#9a6b00"),
-    "Low": ("#e8f5ee", "#1f7a45"),
-}
+FIRE_TONE = {"Extreme": "red", "High": "red", "Moderate": "amber", "Low": "mint"}
 
 
 def fire_pill(level):
-    """A small pill like "WILDFIRE RISK HIGH", colored by level."""
-    bg, fg = FIRE_PILL[level]
-    return f'<span class="pill" style="background:{bg};color:{fg}">Wildfire risk {escape(level)}</span>'
+    """A small tag like "WILDFIRE HIGH", colored by level."""
+    return tag(f"Wildfire {level}", FIRE_TONE[level])
+
+
+def steps_list(items, more=0):
+    """Next steps: numbered one-liners. items = [text, ...]; more = how many are left out."""
+    if not items:
+        return f'<ul class="steps"><li><span class="more">Nothing to do right now.</span></li></ul>'
+    lis = "".join(f'<li><span class="no">{i}</span><span>{text}</span></li>' for i, text in enumerate(items, 1))
+    if more:
+        lis += f'<li><span class="more">+{more} more in the tabs below</span></li>'
+    return f'<ul class="steps">{lis}</ul>'
 
 
 # While a crisis is on, the map's border pulses red: slow (2 s) and faint
 MAP_PULSE_CSS = f"""<style>
   @keyframes crisis-pulse {{
-    0%, 100% {{ box-shadow: 0 0 0 2px {CORAL}1a; }}
-    50%      {{ box-shadow: 0 0 0 7px {CORAL}55; }}
+    0%, 100% {{ box-shadow: 0 0 0 1px {CORAL}22; }}
+    50%      {{ box-shadow: 0 0 0 6px {CORAL}44; }}
   }}
   .st-key-panel_map [data-testid="stDeckGlJsonChart"] {{
-    border-radius: 14px; animation: crisis-pulse 2s ease-in-out infinite;
+    border-radius: 8px; animation: crisis-pulse 2s ease-in-out infinite;
   }}
 </style>"""
 
@@ -241,9 +293,17 @@ def dashed_outline(shape, dash_m=55, gap_m=35):
     return dashes
 
 
+def level_hex(pct):
+    """Battery level color: green over 50%, amber 20-50%, red under 20%, grey if unknown."""
+    if pct is None:
+        return MUTED
+    return STATE_HEX[rules.NORMAL] if pct > 50 else STATE_HEX[rules.WATCH] if pct >= 20 else CORAL
+
+
 def zone_battery_list(facts_html, rows):
-    """The dark-zone list: a line of key facts, then one line per battery or building:
-    name, type, charge %, hours left, and a small bar (colored like the map's dark-zone dots).
+    """The outage-zone table: key facts as tags, then one line per battery or building:
+    name, type, charge %, time left, and a small bar (colored like the map's dark-zone dots).
+    Medical homes (violet edge) and critical buildings (slate edge) are pinned on top.
     rows: dicts with name, type, pct (None = unknown), hours (None = unknown), kind, pinned."""
     def hours_text(x):
         if x.get("no_backup"):
@@ -256,73 +316,63 @@ def zone_battery_list(facts_html, rows):
             return "empty"
         return rules.hrs(x["hours"])
 
-    lines = []
+    cols = "--cols: minmax(0,1.3fr) minmax(0,1fr) 3em 4.4em 44px"
+    lines = [f'<div class="tr th"><span>Name</span><span>Type</span><span>Charge</span>'
+             f'<span>Left</span><span></span></div>']
     for x in rows:
         pct = x["pct"]
-        color = (MUTED if pct is None else STATE_HEX[rules.NORMAL] if pct > 50
-                 else STATE_HEX[rules.WATCH] if pct >= 20 else STATE_HEX[rules.NEEDS_DISPATCHER])
-        pinned = x["kind"] if x["kind"] in ("medical", "building") else ""
+        pin = {"medical": RING_HEX["medical"], "building": BUILDING_HEX}.get(x["kind"])
+        pin_attr = f' class="tr pin" style="--pin:{pin}"' if pin else ' class="tr"'
         lines.append(
-            f'<div class="zl-row {pinned}"><span class="n" title="{escape(x["name"])}">{escape(x["name"])}</span>'
-            f'<span class="t" title="{escape(x["type"])}">{escape(x["type"])}</span>'
+            f'<div{pin_attr}>'
+            f'<span class="n" title="{escape(x["name"])}">{escape(x["name"])}</span>'
+            f'<span class="m" title="{escape(x["type"])}">{escape(x["type"])}</span>'
             f'<span>{"-" if pct is None else f"{pct:.0f}%"}</span><span>{hours_text(x)}</span>'
-            f'<span class="zl-bar"><span style="width:{0 if pct is None else max(pct, 2):.0f}%;'
-            f'background:{color}"></span></span></div>')
-    return f'<div class="zl-facts">{facts_html}</div><div class="zl">{"".join(lines)}</div>'
+            f'<span class="bar"><span style="width:{0 if pct is None else max(pct, 2):.0f}%;'
+            f'background:{level_hex(pct)}"></span></span></div>')
+    return (f'<div class="facts">{facts_html}</div>'
+            f'<div class="tbl" style="{cols}"><div class="scroll">{"".join(lines)}</div></div>')
 
 
 def severity_dots(severity):
-    """3 -> '●●●○○' in coral (filled dots = severity out of 5)."""
+    """3 -> '●●●○○' in red (filled dots = severity out of 5)."""
     return f'<span class="sev">{"●" * severity}{"○" * (5 - severity)}</span>'
 
 
-def status_bar(left_html, fire_html, crisis=False):
-    """The bar under the top controls: time, weather and the crisis (if any) on the left,
-    the wildfire risk on the right (always). crisis=True adds a coral edge."""
-    return (f'<div class="status-bar{" crisis" if crisis else ""}"><div>{left_html}</div>'
-            f'<div>{fire_html}</div></div>')
+def status_line(left_parts, right_parts, crisis=False):
+    """The quiet status row under the header: pieces of HTML on the left (time, weather,
+    the crisis), tags on the right (wildfire risk). A thin divider between left pieces."""
+    left = '<span class="sep"></span>'.join(left_parts)
+    return (f'<div class="status">{left}<span class="right">{"".join(right_parts)}</span></div>')
 
 
 def alert_lines(rows):
-    """One line per alert: colored dot, home, type, charge %, hours left, what's wrong.
+    """Alerts as a one-line table: state dot + home, type, charge, time left, issue.
     The full reason shows when hovering the line.
     rows: dicts with category, name, type, pct (or None), hours (or None), problem, reason."""
-    out = []
+    cols = "--cols: minmax(0,1.15fr) minmax(0,1fr) 3em 4em minmax(0,1.9fr)"
+    lines = ['<div class="tr th"><span>Home</span><span>Type</span><span>Charge</span>'
+             '<span>Left</span><span>Issue</span></div>']
     for a in rows:
-        numbers = " · ".join(([f"{a['pct']:.0f}%"] if a["pct"] is not None else [])
-                             + ([rules.hrs(a["hours"])] if a["hours"] is not None else []))
-        out.append(
-            f'<div class="aline" title="{escape(a["reason"])}">'
-            f'<span class="dot" style="background:{STATE_HEX[a["category"]]}"></span>'
-            f'<span class="n">{escape(a["name"])}</span><span class="t">{escape(a["type"])}</span>'
-            + (f'<span class="v">{numbers}</span>' if numbers else "")
-            + f'<span class="p">{escape(a["problem"])}</span></div>')
-    return "".join(out)
-
-
-def alert_list(rows):
-    """rows: dicts with battery_id, household_type, zone, category, reason, silent_guess."""
-    out = []
-    for a in rows:
-        guess = f" · silent: {a['silent_guess']}" if a.get("silent_guess") else ""
-        out.append(
-            f'<div class="alert"><span class="dot" style="background:{STATE_HEX[a["category"]]}"></span>'
-            f'<div class="who">{escape(a["battery_id"])} '
-            f'<span class="meta">· {escape(a["household_type"])} home · {escape(a["zone"])}{escape(guess)}</span></div>'
-            f'<div class="why">{escape(a["reason"])}</div></div>'
-        )
-    return "".join(out)
+        pct = "-" if a["pct"] is None else f"{a['pct']:.0f}%"
+        hours = "-" if a["hours"] is None else rules.hrs(a["hours"])
+        lines.append(
+            f'<div class="tr" title="{escape(a["reason"])}">'
+            f'<span class="n"><span class="dot" style="background:{STATE_HEX[a["category"]]}"></span>'
+            f'{escape(a["name"])}</span><span class="m">{escape(a["type"])}</span>'
+            f'<span>{pct}</span><span>{hours}</span><span>{escape(a["problem"])}</span></div>')
+    return f'<div class="tbl" style="{cols}">{"".join(lines)}</div>'
 
 
 def sources(items):
     """
-    A small line of data-source tags. items = [(label, is_real, credit), ...], e.g.
+    The footer: data-source tags and credits. items = [(label, is_real, credit), ...], e.g.
     ("Weather: real (typical October day, 2025 data)", True, "Weather: Open-Meteo").
-    Real data gets a green tag, simulated a grey one; the credit follows in plain text.
+    Real data gets a mint tag, simulated a grey one; the credit follows in plain text.
     """
     out = []
     for text, real, credit in items:
-        bg, fg = ("#e8f5ee", "#1f7a45") if real else ("#ecebe8", MUTED)
+        bg, fg = TAG["mint"] if real else TAG["grey"]
         out.append(f'<span class="src" style="background:{bg};color:{fg}">{escape(text)}</span>')
         if credit:
             out.append(f'<span class="credit">{escape(credit)}</span>')
@@ -331,37 +381,36 @@ def sources(items):
 
 def swatch(color, ring=None, ring_px=0, square=False):
     border = f"{ring_px}px solid {ring}" if ring else "none"
-    radius = "3px" if square else "50%"
+    radius = "2px" if square else "50%"
     return f'<span class="sw" style="background:{color};border:{border};border-radius:{radius}"></span>'
 
 
 def legend(dark=False, forecast=False):
-    """What every color and shape on the map means. dark / forecast: also explain the
-    dark-zone dots / the dashed outline (only while there are some)."""
-    grey = "#c9c6c2"
+    """What every color and shape on the map means, in one or two quiet lines.
+    dark / forecast: also explain the dark-zone dots / the dashed outline (only while
+    there are some)."""
+    grey = "#c9ccc6"
     return (
         '<div class="legend">'
         "<b>Battery</b>"
         f"{swatch(STATE_HEX[rules.NORMAL])}Normal"
         f"{swatch(STATE_HEX[rules.WATCH])}Watch"
         f"{swatch(STATE_HEX[rules.CAN_WAIT])}Can wait"
-        f"{swatch(STATE_HEX[rules.NEEDS_DISPATCHER], CORAL + '55', 3)}Needs dispatcher (pulsing)<br/>"
-        "<b>Household</b>"
-        f"{swatch(grey)}Regular"
+        f"{swatch(STATE_HEX[rules.NEEDS_DISPATCHER], CORAL + '55', 3)}Needs dispatcher"
+        "<b>Home</b>"
         f"{swatch(grey, RING_HEX['vulnerable'], 2)}Vulnerable"
-        f"{swatch(grey, RING_HEX['medical'], 4)}Medical"
-        f"{swatch(BUILDING_HEX, square=True)}Critical building<br/>"
+        f"{swatch(grey, RING_HEX['medical'], 3)}Medical"
+        f"{swatch(BUILDING_HEX, square=True)}Critical building"
         "<b>Zone</b>"
-        f"{swatch(ZONE_HEX['OK'] + '55', square=True)}OK"
-        f"{swatch(ZONE_HEX['Busy'] + '66', square=True)}Busy (70%+)"
-        f"{swatch(ZONE_HEX['Strained'] + '66', square=True)}Strained (80%+)"
-        f"{swatch(DARK_ZONE_HEX + '99', square=True)}No grid power"
+        f"{swatch(ZONE_HEX['Busy'] + '66', square=True)}Busy 70%+"
+        f"{swatch(ZONE_HEX['Strained'] + '66', square=True)}Strained 80%+"
+        f"{swatch(DARK_ZONE_HEX + '99', square=True)}No grid"
         + (f'<span class="sw" style="border:2px dashed {CORAL};background:none"></span>Outage forecast'
            if forecast else "")
-        + ("<br/><b>In dark zones</b>"
-           f"{swatch(STATE_HEX[rules.NORMAL])}Battery over 50%"
+        + ("<b>Dark zones</b>"
+           f"{swatch(STATE_HEX[rules.NORMAL])}over 50%"
            f"{swatch(STATE_HEX[rules.WATCH])}20-50%"
-           f"{swatch(STATE_HEX[rules.NEEDS_DISPATCHER])}Under 20% or off"
+           f"{swatch(CORAL)}under 20% or off"
            if dark else "")
         + "</div>"
     )
