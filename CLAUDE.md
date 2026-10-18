@@ -63,6 +63,34 @@ from 6:15 PM, the fourth stays OK. Nothing is strained on a normal day.
 What stays in code, not config: the demo scenario (which batteries fail, the 2-8 PM heat
 wave) and the general shape of a day (cheap solar 10-3, evening peak 5-9).
 
+## Next: Crisis mode (plan)
+Checkpoint before starting: commit and tag `before-crisis-mode`.
+
+A mode that replaces the single scripted stress event with crises that depend on the
+time of year, so the dispatcher sees how the fleet copes with different kinds of trouble.
+- **Month selector**: pick a month; the day's weather, load and crisis odds follow it.
+- **Seasonal crisis chances**: each country's config lists its crises and how likely each
+  is per month (e.g. Texas: summer heat waves, winter freezes, hurricanes; Munich: winter
+  cold snaps, summer storms). All numbers approximate.
+- **Forecastable vs. sudden crises**: forecastable ones (heat wave, cold snap) are announced
+  hours ahead, so batteries can pre-charge; sudden ones (storm damage, equipment failure)
+  hit with no warning. The summary shows the forecast and how much warning there was.
+- **Wildfire risk index**: a 0-100 daily score from heat, dryness and wind for the month.
+  High risk can trigger preventive power shutoffs in the zones most exposed.
+- **Severity scale**: every crisis gets a level (e.g. 1 minor to 5 extreme) that sets how
+  hard it hits load, prices and outages, shown clearly on screen.
+- **Random blackouts by zone**: during a crisis, some zones may lose grid power entirely,
+  chosen at random weighted by severity (and by wildfire risk for shutoffs).
+- **Full-blackout toggle**: a switch to cut grid power to the whole region at once, for
+  the worst-case demo.
+- **Battery runtime for zones that lose power**: for each home in a blacked-out zone, how
+  long its battery keeps it running at current use (hours left); medical and vulnerable
+  homes first, with a warning when runtime runs low. Critical buildings show their own
+  backup hours.
+
+Keep the existing rules (triage, relief ladder, approvals) working in crisis mode; the
+dispatcher still approves every high-impact step.
+
 ## Tech stack
 - Python + Streamlit (web dashboard), Altair for charts, pydeck for the map
 - Simulated battery fleet data (no real API), with planted problems for the demo:
