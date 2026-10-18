@@ -91,6 +91,10 @@ CSS = f"""
           margin-right: .45rem; }}
   .credit {{ color: {MUTED}; margin-right: 1.3rem; }}
 
+  /* Crisis mode: one line on what's happening, with a coral edge */
+  .crisis-line {{ margin: .2rem 0 .5rem; padding: .55rem 1rem; background: #fff; border-radius: 14px;
+                  border-left: 5px solid {CORAL}; font-size: .95rem; line-height: 1.6; }}
+
   /* Legend under the map */
   .legend {{ font-size: .95rem; color: {INK}; line-height: 2.1; }}
   .legend b {{ font-weight: 600; color: {MUTED}; font-size: .78rem; letter-spacing: .12em;
@@ -212,5 +216,6 @@ def legend():
         f"{swatch(ZONE_HEX['OK'] + '55', square=True)}OK"
         f"{swatch(ZONE_HEX['Busy'] + '66', square=True)}Busy (70%+)"
         f"{swatch(ZONE_HEX['Strained'] + '66', square=True)}Strained (80%+)"
+        f"{swatch('#1c1c1e99', square=True)}No grid power"
         "</div>"
     )

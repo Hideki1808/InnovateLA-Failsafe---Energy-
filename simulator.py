@@ -105,7 +105,8 @@ def use_country(country_id):
     ZONES = {z["name"]: {"shape": [tuple(p) for p in z["shape"]],
                          "capacity_kw": z["capacity_kw"],
                          "other_customers_kw": z["other_customers_kw"],
-                         "wildfire_exposure": z.get("wildfire_exposure", 0.5)}
+                         "wildfire_exposure": z.get("wildfire_exposure", 0.5),
+                         "overhead_lines": z.get("overhead_lines", 0.5)}
              for z in c["zones"]}
     WATER = {w["name"]: [tuple(p) for p in w["shape"]] for w in c.get("water", [])}
     HOUSEHOLD_TYPES = {t: (desc, priority, c["household_mix"][t])

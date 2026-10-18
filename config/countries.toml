@@ -17,6 +17,10 @@
 # month picked in the dashboard. If that file is missing or broken, the dashboard falls
 # back to the approximate monthly values in [countries.<id>.typical_weather].
 #
+# Each zone has overhead_lines (0-1, approximate): the share of its power lines on poles.
+# Windstorms bring down overhead lines; buried ones survive. Austin is mostly overhead,
+# Munich mostly underground.
+#
 # Each zone has a wildfire_exposure (0-1, approximate): zones next to brush, forest or
 # greenbelts are more exposed. It scales the region's wildfire risk index per zone.
 #
@@ -100,6 +104,7 @@ shape = [[30.3180, -97.7000], [30.3180, -97.6760], [30.3130, -97.6760], [30.3130
 capacity_kw = 610   # approx., set so the demo stress event strains this zone at the right time
 other_customers_kw = 250                 # other homes and shops at their evening peak (approx.)
 wildfire_exposure = 0.5                  # 0-1, how exposed to wildfire (approx.): dense housing
+overhead_lines = 0.8                    # 0-1, share of power lines overhead (approx.; wind can bring them down)
 
 [[countries.us_texas.zones]]
 name = "West Windsor Park"
@@ -107,6 +112,7 @@ shape = [[30.3130, -97.7000], [30.3130, -97.6880], [30.3060, -97.6880], [30.3060
 capacity_kw = 560
 other_customers_kw = 250
 wildfire_exposure = 0.9                  # 0-1, how exposed to wildfire (approx.): Fort Branch creek greenbelt: brush and trees
+overhead_lines = 0.9                    # 0-1, share of power lines overhead (approx.; wind can bring them down)
 
 [[countries.us_texas.zones]]
 name = "East Windsor Park"
@@ -114,6 +120,7 @@ shape = [[30.3130, -97.6880], [30.3130, -97.6760], [30.3060, -97.6760], [30.3060
 capacity_kw = 560
 other_customers_kw = 250
 wildfire_exposure = 0.6                  # 0-1, how exposed to wildfire (approx.): some green space
+overhead_lines = 0.7                    # 0-1, share of power lines overhead (approx.; wind can bring them down)
 
 [[countries.us_texas.zones]]
 name = "South Windsor Park"
@@ -121,6 +128,7 @@ shape = [[30.3060, -97.7000], [30.3060, -97.6760], [30.3000, -97.6760], [30.3000
 capacity_kw = 450
 other_customers_kw = 250
 wildfire_exposure = 0.8                  # 0-1, how exposed to wildfire (approx.): next to the park and creek in the south-west
+overhead_lines = 0.6                    # 0-1, share of power lines overhead (approx.; wind can bring them down)
 
 [[countries.us_texas.water]]             # Mueller Lake, just south-west of the region
 name = "Mueller Lake"
@@ -224,6 +232,7 @@ shape = [[48.1280, 11.6400], [48.1280, 11.6720], [48.1230, 11.6720], [48.1230, 1
 capacity_kw = 290   # approx., set so the demo stress event strains this zone at the right time
 other_customers_kw = 150
 wildfire_exposure = 0.5                  # 0-1, how exposed to wildfire (approx.): dense housing, railway
+overhead_lines = 0.15                    # 0-1, share of power lines overhead (approx.; wind can bring them down)
 
 [[countries.de_munich.zones]]
 name = "Trudering West"
@@ -231,6 +240,7 @@ shape = [[48.1230, 11.6400], [48.1230, 11.6560], [48.1170, 11.6560], [48.1170, 1
 capacity_kw = 360
 other_customers_kw = 150
 wildfire_exposure = 0.4                  # 0-1, how exposed to wildfire (approx.): dense housing
+overhead_lines = 0.1                    # 0-1, share of power lines overhead (approx.; wind can bring them down)
 
 [[countries.de_munich.zones]]
 name = "Trudering Ost"
@@ -238,6 +248,7 @@ shape = [[48.1230, 11.6560], [48.1230, 11.6720], [48.1170, 11.6720], [48.1170, 1
 capacity_kw = 390
 other_customers_kw = 150
 wildfire_exposure = 0.9                  # 0-1, how exposed to wildfire (approx.): next to the Truderinger forest
+overhead_lines = 0.3                    # 0-1, share of power lines overhead (approx.; wind can bring them down)
 
 [[countries.de_munich.zones]]
 name = "Trudering Süd"
@@ -245,6 +256,7 @@ shape = [[48.1170, 11.6400], [48.1170, 11.6720], [48.1120, 11.6720], [48.1120, 1
 capacity_kw = 370
 other_customers_kw = 150
 wildfire_exposure = 0.7                  # 0-1, how exposed to wildfire (approx.): gardens and green space
+overhead_lines = 0.2                    # 0-1, share of power lines overhead (approx.; wind can bring them down)
 
 [[countries.de_munich.water]]             # lake in the Ostpark, just west of the region
 name = "Ostpark lake"

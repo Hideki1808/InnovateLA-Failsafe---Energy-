@@ -322,11 +322,12 @@ def pick_random(country_id, month, seed=None):
     return make_crisis(country_id, month, kind, severity, rng=rng, chances=chances)
 
 
-def make_crisis(country_id, month, kind, severity, rng=None, chances=None):
-    """A crisis of a chosen type and severity (1-5), e.g. for the dispatcher's manual pick."""
+def make_crisis(country_id, month, kind, severity, rng=None, chances=None, seed=None):
+    """A crisis of a chosen type and severity (1-5), e.g. for the dispatcher's manual pick.
+    The same seed gives the same start time and warning, so it replays exactly."""
     if kind not in TYPES:
         raise ValueError(f"unknown crisis type {kind!r}; choose from {', '.join(TYPES)}")
-    rng = rng or random.Random()
+    rng = rng or random.Random(seed)
     severity = int(min(5, max(1, severity)))
     t = TYPES[kind]
     start = t["start_hour"] if t["start_hour"] is not None else rng.randint(9, 18)  # sudden: any daytime hour
@@ -370,6 +371,116 @@ def forecast_label(c, hour):
 
 
 # ---------------------------------------------------------------------------
+# Blackouts: which zones lose grid power, and for how long
+# ---------------------------------------------------------------------------
+# Chance that a crisis of this severity cuts power anywhere at all. Severity 4-5 always do.
+OUTAGE_CHANCE = {1: 0.05, 2: 0.20, 3: 0.45, 4: 1.0, 5: 1.0}
+# When it does, roughly what share of the zones go dark (at least one).
+DARK_SHARE = {1: 0.25, 2: 0.25, 3: 0.35, 4: 0.5, 5: 0.75}
+# How long until power is back in a dark zone, in hours (a random time in this range).
+RESTORE_HOURS = {1: (1, 2), 2: (2, 4), 3: (3, 6), 4: (5, 10), 5: (8, 16)}
+
+
+def _zone_weights(country_id, kind):
+    """
+    How likely each zone is to go dark in this kind of crisis (bigger = more likely):
+      wildfire:   zones on the region's edges (closer to open land), more so if exposed to
+                  brush or forest: (0.2 + edge) x (0.3 + wildfire_exposure)
+      windstorm:  zones with more overhead lines (wind brings them down): 0.05 + overhead_lines
+      earthquake: anywhere, all zones the same
+      heat wave / cold snap: zones with the least spare capacity (equipment overloads first)
+      conflict:   zones with critical buildings (likely targets): 0.3 + number of buildings
+    "edge" = how many of the zone's 4 sides lie on the region's outer border, / 4.
+    """
+    zones = simulator.COUNTRIES[country_id]["zones"]
+    all_points = [p for z in zones for p in z["shape"]]
+    south, north = min(p[0] for p in all_points), max(p[0] for p in all_points)
+    west, east = min(p[1] for p in all_points), max(p[1] for p in all_points)
+
+    def edge(z):
+        lats, lons = [p[0] for p in z["shape"]], [p[1] for p in z["shape"]]
+        sides = [min(lats) == south, max(lats) == north, min(lons) == west, max(lons) == east]
+        return sum(sides) / 4
+
+    if simulator.COUNTRY_ID != country_id:
+        simulator.use_country(country_id)
+    buildings = {}
+    for b in simulator.critical_buildings():
+        buildings[b["zone"]] = buildings.get(b["zone"], 0) + 1
+    smallest = min(z["capacity_kw"] for z in zones)
+
+    weights = {}
+    for z in zones:
+        if kind == "wildfire":
+            w = (0.2 + edge(z)) * (0.3 + z.get("wildfire_exposure", 0.5))
+        elif kind == "windstorm":
+            w = 0.05 + z.get("overhead_lines", 0.5)
+        elif kind in ("heat_wave", "cold_snap"):
+            w = smallest / z["capacity_kw"]
+        elif kind == "conflict":
+            w = 0.3 + buildings.get(z["name"], 0)
+        else:                                   # earthquake: anywhere
+            w = 1.0
+        weights[z["name"]] = w
+    return weights
+
+
+def blackouts(country_id, c, seed, force_full=False):
+    """
+    Which zones lose grid power during crisis c, and when.
+    Returns a list of {"zone", "start", "end", "cause"} with start/end as hours of the day
+    (e.g. 15.25 = 3:15 pm). Same seed -> exactly the same outages (so a crisis can be
+    replayed); a different seed -> a new outcome ("Reroll").
+    force_full=True cuts every zone (a full blackout).
+    """
+    rng = random.Random(f"{seed}:blackouts")          # its own random stream, from the seed
+    severity = c["severity"]
+    names = [z["name"] for z in simulator.COUNTRIES[country_id]["zones"]]
+
+    if force_full:
+        dark = names
+    else:
+        # 1) Does this crisis cut power at all? (always at severity 4-5)
+        if rng.random() >= OUTAGE_CHANCE[severity]:
+            return []
+        # 2) How many zones: the severity's share of zones, give or take one, at least one
+        count = round(DARK_SHARE[severity] * len(names) + rng.uniform(-0.5, 0.5))
+        count = max(1, min(len(names), count))
+        # 3) Which ones: a weighted draw without repeats (likelier zones come up first)
+        weights = _zone_weights(country_id, c["type"])
+        dark, pool = [], dict(weights)
+        for _ in range(count):
+            pick = rng.choices(list(pool), weights=list(pool.values()))[0]
+            dark.append(pick)
+            del pool[pick]
+
+    outages = []
+    low, high = RESTORE_HOURS[severity]
+    for zone in dark:
+        start = c["start_hour"]
+        if c["type"] in ("windstorm", "wildfire", "heat_wave", "cold_snap"):
+            # these build up: lines fail at some point while the crisis is on
+            start += rng.uniform(0, max(0.25, (c["end_hour"] - c["start_hour"]) * 0.6))
+        start = round(start * 4) / 4                    # to the quarter hour
+        duration = high if force_full else rng.uniform(low, high)
+        end = min(24.0, round((start + duration) * 4) / 4)
+        cause = "full blackout" if force_full else c["name"].lower()
+        outages.append({"zone": zone, "start": start, "end": end, "cause": cause})
+    return sorted(outages, key=lambda o: o["start"])
+
+
+def dark_zones_at(outages, hour):
+    """The zones without grid power at this hour of the day (e.g. 15.5)."""
+    return {o["zone"] for o in outages if o["start"] <= hour < o["end"]}
+
+
+def hour_text(hour):
+    """15.25 -> '15:15' (the dashboard turns it into 3:15 PM where needed)."""
+    h = int(hour)
+    return f"{min(h, 23):02d}:{int(round((hour - h) * 60)) % 60:02d}" if hour < 24 else "24:00"
+
+
+# ---------------------------------------------------------------------------
 # Run directly: chances by month for every country, and a few random picks
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
@@ -383,6 +494,12 @@ if __name__ == "__main__":
             ch = monthly_chances(country_id, month)
             index, _ = wildfire_risk_index(country_id, month)
             print(f"{month:5d}  " + "".join(f"{ch[k]['chance']:8.0%}" for k in short) + f"   {index:5d}")
+        for sev in (2, 5):
+            c = make_crisis(country_id, 8, "windstorm", sev, seed=42)
+            out = blackouts(country_id, c, seed=42)
+            print(f"  windstorm severity {sev}, seed 42: "
+                  + (", ".join(f"{o['zone']} {hour_text(o['start'])}-{hour_text(o['end'])}" for o in out)
+                     or "no outages"))
         for month in (1, 8):
             c = pick_random(country_id, month, seed=7)
             print(f"  random pick for month {month}: {c['name']}, severity {c['severity']} "

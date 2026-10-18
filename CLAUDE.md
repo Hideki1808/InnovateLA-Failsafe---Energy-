@@ -82,12 +82,9 @@ Replace the single scripted stress event with crises that depend on the time of 
   trigger preventive power shutoffs in exposed zones.
 - **Severity scale**: each crisis gets a level (1 minor to 5 extreme) that sets how hard
   it hits load, prices and outages, shown clearly on screen.
-- **Random blackouts by zone**: during a crisis some zones lose grid power, picked at
-  random weighted by severity (and by wildfire risk for shutoffs).
-- **Full-blackout toggle**: a switch that cuts grid power to the whole region at once.
-- **Battery runtime for dark zones**: for each home in a zone without grid power, how
-  many hours its battery lasts at current use; medical and vulnerable homes first, with
-  a warning when runtime runs low. Critical buildings show their own backup hours.
+- (Random blackouts, full blackout, seed/Reroll and dark-zone runtimes: done, see the
+  Crisis panel notes under Known gaps. Still to do: the crisis replaces the scripted
+  heat wave / cold snap in the power simulation, and dark zones stop drawing grid power.)
 
 Triage, the relief ladder and approvals keep working in crisis mode; the dispatcher
 still approves every high-impact step.
@@ -121,6 +118,17 @@ Known gaps today (fix as part of the crisis-mode work):
   dispatcher can approve a precautionary shutoff of the riskiest zone (like California's
   PSPS), with homes affected, battery runtimes and when the risk eases. Approving marks
   the zone shut off on the map; the grid effect of the outage isn't simulated yet.
+- Crisis panel (top of Live dispatch): Off / Random (by the month's odds) / Pick (type +
+  severity), a visible Seed (same seed = exactly the same crisis and blackouts), Reroll
+  (new seed) and Full blackout. Default Off, so the normal demo is unchanged.
+  crisis.blackouts(): chance of any outage by severity (1: 5%, 2: 20%, 3: 45%, 4-5:
+  always), share of zones dark (about 1/2 at 4, 3/4 at 5), zones drawn weighted by type
+  (wildfire: region edges x wildfire_exposure; windstorm: config overhead_lines;
+  earthquake: anywhere; heat/cold: least capacity; attack: zones with critical
+  buildings), restore time longer at higher severity. Dark zones show black on the map;
+  the Response ladder's Blackout card lists homes, runtimes and who runs out before power
+  returns (rules.blackout_report); the summary puts the blackout first. Limitation: the
+  crisis doesn't drive the power simulation yet (the scripted heat wave still runs).
 - The saved earthquakes are used for crisis chances, not shown on screen yet.
 
 ## Tech stack
@@ -151,7 +159,8 @@ Known gaps today (fix as part of the crisis-mode work):
 - data/: the fetched data (weather_*, buildings_*, earthquakes_* per country), committed to git
 - crisis.py: the six crisis types (heat wave, cold snap, windstorm, earthquake, wildfire,
   grid attack): chance per country/month from the saved data (config fallback),
-  forecastable or not, severity 1-5, random pick and manual pick. Not shown in the app yet.
+  forecastable or not, severity 1-5, random pick and manual pick, wildfire index, and
+  seeded random blackouts by zone (shown in the app's Crisis panel).
 - weather.py: typical day of weather for the chosen country and month: real from data/,
   or approximate monthly values from config/countries.toml if the file is missing or broken
 - .streamlit/config.toml: the theme (off-white page, white rounded panels, coral accent;
