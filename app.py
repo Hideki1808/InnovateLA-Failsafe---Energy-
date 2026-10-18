@@ -417,7 +417,10 @@ with live_tab:
             parts.append("<b>Full blackout</b>")
         parts.append(f'<span class="muted">Seed {st.session_state.crisis_seed}</span>')
         crisis_html = " · ".join(parts)
-    status_slot.html(style.status_bar(crisis_html, fire_html))
+    crisis_live = bool(the_crisis and the_crisis["start_hour"] <= hour_now < the_crisis["end_hour"]
+                       and hour_now < the_crisis.get("ended_at", 99))
+    status_slot.html(style.status_bar(crisis_html, fire_html)
+                     + (style.MAP_PULSE_CSS if crisis_live else ""))
 
     # --- Main area: big map on the left, side panel with what to do on the right ---
     left, right = st.columns([1.9, 1.1], gap="medium")
@@ -428,7 +431,15 @@ with live_tab:
         ink = style.rgb(style.INK)                 # label color on the light map
 
         zone_now = current.groupby("zone")[["zone_stress", "zone_fire_index", "zone_fire_level"]].first()
-        zone_rows = []
+        dark_zones = {o["zone"] for o in outages_now} | shut_off_now      # no grid power right now
+        # Forecast to be hit: a forecast crisis has been announced and this zone's outage is
+        # still ahead. (Sudden crises give no warning, so nothing is forecast for them.)
+        forecast_out = {}
+        if the_crisis and the_crisis["forecastable"] and the_crisis["triggered_at"] <= hour_now:
+            for o in outages:
+                if hour_now < o["start"] and o["zone"] not in dark_zones:
+                    forecast_out[o["zone"]] = min(o["start"], forecast_out.get(o["zone"], 99))
+        zone_rows, forecast_paths = [], []
         for name, z in simulator.ZONES.items():
             stress = zone_now.loc[name, "zone_stress"]
             fire_index, fire_level = zone_now.loc[name, "zone_fire_index"], zone_now.loc[name, "zone_fire_level"]
@@ -436,26 +447,28 @@ with live_tab:
                      else "Busy" if stress >= rules.BUSY_GRID else "OK")
             fill = style.rgb(style.ZONE_HEX[state], {"Strained": 32, "Busy": 38, "OK": 26}[state])
             label = f"{name}: {stress:.0f}%"
-            line2 = f"Wildfire risk {fire_level.lower()} ({fire_index}/100)"
+            title = f"{name} · {stress:.0f}% of capacity"
+            line1 = f"{state} · wildfire risk {fire_level.lower()}"
             if fire_level in ("High", "Extreme"):
                 label += f" · fire {fire_level.lower()}"
-                line2 += ": batteries hold an 80% reserve"
             dark = next((o for o in outages_now if o["zone"] == name), None)
             if dark:                                # crisis blackout: no grid power here
-                fill, label = style.rgb("#1c1c1e", 150), f"{name}: no power"
-                line2 = (f"Blackout ({dark['cause']}) since {rules._hour_clock(dark['start'])}; homes run on "
-                         f"their batteries. Power back "
-                         + (f"about {rules._hour_clock(dark['end'])}" if dark["end"] < 24 else "after midnight"))
+                fill, label = style.rgb(style.DARK_ZONE_HEX, 120), f"{name}: no power"
+                title = f"{name} · no grid power"
+                line1 = "Power back " + (f"~{rules._hour_clock(dark['end'])}" if dark["end"] < 24 else "after midnight")
             elif name in shut_off_now:                # precautionary shutoff approved: zone is dark
-                fill, label = style.rgb("#3a3a3c", 120), f"{name}: shut off"
-                line2 = "Precautionary shutoff (wildfire): homes run on their batteries"
+                fill, label = style.rgb(style.DARK_ZONE_HEX, 120), f"{name}: shut off"
+                title, line1 = f"{name} · shut off", "Precautionary shutoff (wildfire)"
+            elif name in forecast_out:
+                label += f"\nOutage ~{rules._hour_clock(forecast_out[name])}"   # second line
+                line1 = f"Outage forecast ~{rules._hour_clock(forecast_out[name])}"
+                forecast_paths += style.dashed_outline(z["shape"])
             corners = [[lon, lat] for lat, lon in z["shape"]]
             zone_rows.append({
                 "polygon": corners, "fill": fill, "label": label,
                 # Label in the zone's top-left corner, out of the way of the dots
                 "lat": max(p[1] for p in corners), "lon": min(p[0] for p in corners),
-                "title": name, "line1": f"Zone {state.lower()}: using {stress:.0f}% of its capacity",
-                "line2": line2,
+                "title": title, "line1": line1,
             })
 
         FADE_MS = 600   # how long a dot or zone takes to fade to its new color
@@ -465,16 +478,41 @@ with live_tab:
         STATE_COLORS = {state: style.rgb(color) for state, color in style.STATE_HEX.items()}
         RING_COLORS = {kind: style.rgb(color) for kind, color in style.RING_HEX.items()}
         BUILDING_COLOR = style.rgb(style.BUILDING_HEX)
+        # Hours each battery could keep its home going without the grid, from now
+        # (rules.battery_runtime: stored energy over the home's expected need)
+        hours_left = {}
+        for zone, homes in current.groupby("zone"):
+            for x in rules.zone_runtimes(readings, now, homes.to_dict("records"), zone)["runtimes"]:
+                hours_left[x["battery_id"]] = x["hours"]
+
+        def level_color(r):
+            """In a dark zone the dot shows the battery level instead of its state."""
+            if r["battery_status"] == "tripped" or pd.isna(r["charge_pct"]):
+                return style.rgb(style.MUTED) if pd.isna(r["charge_pct"]) else STATE_COLORS[rules.NEEDS_DISPATCHER]
+            if r["charge_pct"] > 50:
+                return STATE_COLORS[rules.NORMAL]
+            return STATE_COLORS[rules.WATCH] if r["charge_pct"] >= 20 else STATE_COLORS[rules.NEEDS_DISPATCHER]
+
         home_rows = []
         for _, r in current.merge(results[["battery_id", "category", "reason"]], on="battery_id").iterrows():
+            # Short hover: "Home 112 · Medical · 64% · ~7h left"
+            hours = hours_left.get(r["battery_id"])
+            if r["battery_status"] == "tripped":
+                left_text = "battery off"
+            elif hours is None:
+                left_text = "battery silent"
+            else:
+                left_text = f"~{hours:.0f}h left" if hours >= 1 else f"~{hours * 60:.0f} min left"
+            title = " · ".join([f"Home {int(r['home_id'][5:])}", r["household_type"].capitalize()]
+                               + ([f"{r['charge_pct']:.0f}%"] if pd.notna(r["charge_pct"]) else []) + [left_text])
+            in_dark = r["zone"] in dark_zones
             home_rows.append({
-                "lat": r["lat"], "lon": r["lon"], "color": STATE_COLORS[r["category"]],
+                "lat": r["lat"], "lon": r["lon"],
+                "color": level_color(r) if in_dark else STATE_COLORS[r["category"]],
                 "household_type": r["household_type"], "category": r["category"],
                 "ring": RING_COLORS.get(r["household_type"], [0, 0, 0, 0]),
-                "title": f"{r['battery_id']} · {r['household_type']} home · {r['zone']}",
-                "line1": f"Battery: {r['category']}"
-                         + (f", {r['charge_pct']:.0f}% charged" if pd.notna(r["charge_pct"]) else ", not reporting"),
-                "line2": r["reason"],
+                "title": title,
+                "line1": r["category"] + (" · no grid power" if in_dark else ""),
             })
         vulnerable_rows = [h for h in home_rows if h["household_type"] == "vulnerable"]
         medical_rows = [h for h in home_rows if h["household_type"] == "medical"]
@@ -486,12 +524,10 @@ with live_tab:
             "lat": b["lat"], "lon": b["lon"], "label": b["name"],
             "square": [[b["lon"] - half_lon, b["lat"] - half_lat], [b["lon"] + half_lon, b["lat"] - half_lat],
                        [b["lon"] + half_lon, b["lat"] + half_lat], [b["lon"] - half_lon, b["lat"] + half_lat]],
-            "title": f"{b['name']} · critical building · {b['zone']}",
-            "line1": f"Uses about {b['load_kw']} kW. Backup: {b['backup'].lower()}"
-                     + (f", {b['backup_hours']} h" if b["backup_hours"] else ""),
-            "line2": ("Real building (OpenStreetMap); power use approximate."
-                  if b.get("real") else "Simulated building (no real one found here).")
-                 + " Protected last: never cut off.",
+            "title": b["name"],                     # the real OpenStreetMap name, if real
+            "line1": " · ".join([b["building_type"].replace("_", " ").capitalize(),
+                                 f"backup {b['backup_hours']} h" if b["backup_hours"] else "no backup"]
+                                + ([] if b.get("real") else ["simulated"])),
         } for b in simulator.critical_buildings()]
         # Buildings close together (like a fire station next to a water facility) would
         # print their names on top of each other: push each later one's name down a line.
@@ -513,7 +549,10 @@ with live_tab:
             pdk.Layer("PolygonLayer", zone_rows, get_polygon="polygon", get_fill_color="fill",
                       get_line_color=ink + [90], line_width_min_pixels=1, pickable=True,
                       transitions={"getFillColor": FADE_MS}),
-                # Critical buildings: larger squares with their name beside them
+                # Zones forecast to lose power: a dashed coral outline
+            pdk.Layer("PathLayer", forecast_paths, get_path="path", get_color=style.rgb(style.CORAL, 230),
+                      get_width=3, width_units="'pixels'", cap_rounded=True),
+            # Critical buildings: larger squares with their name beside them
             pdk.Layer("PolygonLayer", building_rows, get_polygon="square", get_fill_color=BUILDING_COLOR,
                       get_line_color=[255, 255, 255], line_width_min_pixels=2, pickable=True),
             pdk.Layer("TextLayer", character_set="'auto'", font_family=f"'{style.FONT}'", data=building_rows, get_position=["lon", "lat"], get_text="label", get_color=ink,
@@ -533,15 +572,16 @@ with live_tab:
         ]
         view = pdk.ViewState(latitude=COUNTRY["map"]["center"][0], longitude=COUNTRY["map"]["center"][1],
                              zoom=COUNTRY["map"]["zoom"])
-        # Hover box: the formatting lives here; each row just supplies plain title/line1/line2
-        tooltip = {"html": "<b>{title}</b><br/>{line1}<br/>{line2}",
+        # Hover box: the formatting lives here; each row just supplies plain title/line1
+        tooltip = {"html": "<b>{title}</b><br/>{line1}",
                    "style": {"maxWidth": "340px", "fontSize": "15px", "fontFamily": style.FONT, "backgroundColor": "#ffffff",
                              "color": style.INK, "borderRadius": "12px", "padding": "10px 12px",
                              "boxShadow": "0 4px 18px rgba(0,0,0,.12)"}}
         draw_map(below, above, urgent_rows, view, tooltip)
+        st.html('<div class="map-credit">© OpenStreetMap contributors · © CARTO</div>')
 
         # Legend: what every color and shape means
-        st.html(style.legend())
+        st.html(style.legend(dark=bool(dark_zones), forecast=bool(forecast_out)))
         map_gestures.install()   # two-finger slide moves the map, pinch zooms
 
     with right, st.container(key="panel_side"):

@@ -128,6 +128,12 @@ Known gaps today (fix as part of the crisis-mode work):
   Status bar under the panel (always on the page): crisis banner (type, severity dots,
   Forecast / No warning, hits in / started ago / over, zones dark, full blackout, seed)
   and the wildfire risk level, always.
+- Map in a crisis: the map's border pulses red (2 s, faint) while the crisis is on;
+  dark zones are gray and their dots show battery level (green >50%, yellow 20-50%,
+  red <20% or off: the one place red isn't "Needs dispatcher"); zones whose outage is
+  forecast get a dashed coral outline and "Outage ~time" label. Hovers are short
+  ("Home 12 · Medical · 64% · ~7h left", buildings by their real name). Credits
+  "© OpenStreetMap contributors · © CARTO" sit in the map's bottom-left corner.
   crisis.blackouts(): chance of any outage by severity (1: 5%, 2: 20%, 3: 45%, 4-5:
   always), share of zones dark (about 1/2 at 4, 3/4 at 5), zones drawn weighted by type
   (wildfire: region edges x wildfire_exposure; windstorm: config overhead_lines;

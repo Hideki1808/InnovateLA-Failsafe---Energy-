@@ -43,6 +43,7 @@ STATE_HEX = {
 RING_HEX = {"vulnerable": "#1c1c1e", "medical": "#7b4fd6"}   # thin ink ring, thick violet ring
 BUILDING_HEX = "#4a4f5a"                                     # dark slate squares
 ZONE_HEX = {"OK": "#9aa3ad", "Busy": "#f08a24", "Strained": CORAL}
+DARK_ZONE_HEX = "#6f6b67"   # a zone without grid power: shaded gray
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +99,12 @@ CSS = f"""
   .status-bar.crisis {{ border-left: 5px solid {CORAL}; }}
   .status-bar .muted {{ color: {MUTED}; margin-left: .45rem; }}
   .sev {{ color: {CORAL}; letter-spacing: .08em; }}
+
+  /* Map credits, pulled up into the map's bottom-left corner */
+  .map-credit {{ position: relative; top: -58px; z-index: 5; display: block; width: fit-content;
+                 margin: 0 0 -30px .6rem;
+                 padding: .1rem .55rem; border-radius: 8px; background: rgba(255,255,255,.85);
+                 color: {MUTED}; font-size: .72rem; pointer-events: none; }}
 
   /* Legend under the map */
   .legend {{ font-size: .95rem; color: {INK}; line-height: 2.1; }}
@@ -167,6 +174,36 @@ def fire_pill(level):
     return f'<span class="pill" style="background:{bg};color:{fg}">Wildfire risk {escape(level)}</span>'
 
 
+# While a crisis is on, the map's border pulses red: slow (2 s) and faint
+MAP_PULSE_CSS = f"""<style>
+  @keyframes crisis-pulse {{
+    0%, 100% {{ box-shadow: 0 0 0 2px {CORAL}1a; }}
+    50%      {{ box-shadow: 0 0 0 7px {CORAL}55; }}
+  }}
+  .st-key-panel_map [data-testid="stDeckGlJsonChart"] {{
+    border-radius: 14px; animation: crisis-pulse 2s ease-in-out infinite;
+  }}
+</style>"""
+
+
+def dashed_outline(shape, dash_m=55, gap_m=35):
+    """A zone's outline as short dashes, for the map's PathLayer. shape: [(lat, lon), ...].
+    Returns [{"path": [[lon, lat], [lon, lat]]}, ...], one entry per dash."""
+    import math
+    lat0 = sum(p[0] for p in shape) / len(shape)
+    m_per_lat, m_per_lon = 111_320, 111_320 * math.cos(math.radians(lat0))
+    dashes = []
+    for (lat1, lon1), (lat2, lon2) in zip(shape, shape[1:] + shape[:1]):
+        length = math.hypot((lat2 - lat1) * m_per_lat, (lon2 - lon1) * m_per_lon)
+        pos = 0.0
+        while pos < length:
+            a, b = pos / length, min(pos + dash_m, length) / length
+            dashes.append({"path": [[lon1 + (lon2 - lon1) * a, lat1 + (lat2 - lat1) * a],
+                                    [lon1 + (lon2 - lon1) * b, lat1 + (lat2 - lat1) * b]]})
+            pos += dash_m + gap_m
+    return dashes
+
+
 def severity_dots(severity):
     """3 -> '●●●○○' in coral (filled dots = severity out of 5)."""
     return f'<span class="sev">{"●" * severity}{"○" * (5 - severity)}</span>'
@@ -215,7 +252,9 @@ def swatch(color, ring=None, ring_px=0, square=False):
     return f'<span class="sw" style="background:{color};border:{border};border-radius:{radius}"></span>'
 
 
-def legend():
+def legend(dark=False, forecast=False):
+    """What every color and shape on the map means. dark / forecast: also explain the
+    dark-zone dots / the dashed outline (only while there are some)."""
     grey = "#c9c6c2"
     return (
         '<div class="legend">'
@@ -233,6 +272,13 @@ def legend():
         f"{swatch(ZONE_HEX['OK'] + '55', square=True)}OK"
         f"{swatch(ZONE_HEX['Busy'] + '66', square=True)}Busy (70%+)"
         f"{swatch(ZONE_HEX['Strained'] + '66', square=True)}Strained (80%+)"
-        f"{swatch('#1c1c1e99', square=True)}No grid power"
-        "</div>"
+        f"{swatch(DARK_ZONE_HEX + '99', square=True)}No grid power"
+        + (f'<span class="sw" style="border:2px dashed {CORAL};background:none"></span>Outage forecast'
+           if forecast else "")
+        + ("<br/><b>In dark zones</b>"
+           f"{swatch(STATE_HEX[rules.NORMAL])}Battery over 50%"
+           f"{swatch(STATE_HEX[rules.WATCH])}20-50%"
+           f"{swatch(STATE_HEX[rules.NEEDS_DISPATCHER])}Under 20% or off"
+           if dark else "")
+        + "</div>"
     )
