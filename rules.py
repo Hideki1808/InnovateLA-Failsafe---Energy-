@@ -165,6 +165,16 @@ def classify(row, history, fleet_kw_by_time):
             reason += f" Critical home ({home}): check this first."
         return NEEDS_DISPATCHER, reason, None
 
+    # Rule 1b - BLACKOUT: the zone has no grid power and this home's battery can't cover
+    # what it needs (empty, switched off, or the home needs more than the battery can give).
+    # At a critical home that's urgent; elsewhere, keep an eye on it.
+    if not row.get("grid_power", True) and row.get("unserved_kw", 0) > 0.05:
+        reason = (f"No grid power in {row['zone']} and the battery can't cover this home: "
+                  f"{row['unserved_kw']:.1f} kW unmet.")
+        if critical:
+            return NEEDS_DISPATCHER, reason + f" Critical home ({home}).", None
+        return WATCH, reason, None
+
     # Rule 2 - The battery is SILENT. Use the meter to guess why (see guess_silent).
     # Broken or tripped means it isn't helping, so a person needs to act.
     # "Just not talking" or "can't tell yet" only needs watching.
@@ -190,6 +200,8 @@ def classify(row, history, fleet_kw_by_time):
         reason = f"Backup down to {row['charge_pct']:.0f}% at a critical home ({home})."
         if stress >= STRAINED_GRID:
             return NEEDS_DISPATCHER, reason + f" {row['zone']} is strained ({stress:.0f}% of capacity).", None
+        if not row.get("grid_power", True):
+            return NEEDS_DISPATCHER, reason + f" {row['zone']} has no grid power.", None
         return WATCH, reason, None
 
     # Rule 5 - Odd VOLTAGE at the home. Not an emergency, but often comes before trouble.
@@ -457,26 +469,72 @@ def shutoff_plan(readings, at_time):
                  < crisis.HIGH_RISK), None)
     return {"zone": zone, "index": index, "level": crisis.risk_level(index),
             "until": ends,                   # None = risk lasts the rest of the day
-            **zone_runtimes(homes, zone)}
+            **zone_runtimes(readings, at_time, homes, zone)}
 
 
-def zone_runtimes(homes, zone):
+# ---------------------------------------------------------------------------
+# Battery runtime: how long each home can run on its own battery without the grid
+# ---------------------------------------------------------------------------
+HOUSEHOLD_ORDER = {"medical": 0, "vulnerable": 1, "regular": 2}   # most at risk first
+
+
+def demand_kw(r):
+    """What the home NEEDS right now: what it uses plus anything it had to go without
+    (in an outage the battery may not cover everything)."""
+    return r["home_usage_kw"] + r.get("unserved_kw", 0)
+
+
+def battery_runtime(r, coming):
     """
-    For the homes of a zone that loses (or would lose) grid power: how long each could run
-    on its own battery at its current use (stored energy in kWh / power use in kW = hours).
-    Silent batteries: unknown. Listed most at risk first: medical, vulnerable, then shortest.
+    Hours this home can run on its battery alone, from now.
+      stored energy = charge % x battery size (kWh)
+      Then walk forward 15 minutes at a time, using the home's expected need for each
+      coming step (the forecast: it includes the extra heating or cooling of a cold snap
+      or heat wave, and the evening peak), until the stored energy runs out.
+      A battery can't give more than its max power: if the home needs more, the extra
+      goes unmet and the battery only drains at its max.
+    r: the home's reading now. coming: its readings from now on, in order.
+    Returns (hours, short_kw): hours = None if unknown (silent battery); short_kw = how
+    much the home needs beyond what the battery can give right now (0 = fully covered).
     """
+    short_kw = max(0.0, demand_kw(r) - simulator.BATTERY_MAX_KW)
+    if r["battery_status"] == "tripped":
+        return 0.0, short_kw                             # switched off: no backup at all
+    if r["charge_pct"] is None:
+        return None, short_kw                            # silent: we don't know its charge
+    step_h = simulator.STEP_MINUTES / 60
+    energy = r["charge_pct"] / 100 * simulator.BATTERY_CAPACITY_KWH
+    hours = 0.0
+    for row in coming:
+        kw = max(min(demand_kw(row), simulator.BATTERY_MAX_KW), 0.3)
+        if energy <= kw * step_h:
+            return hours + energy / kw, short_kw         # runs out partway through this step
+        energy -= kw * step_h
+        hours += step_h
+    # Past the end of the day: keep going at the last hour's average need
+    last = [max(min(demand_kw(x), simulator.BATTERY_MAX_KW), 0.3) for x in coming[-4:]] or [0.3]
+    return hours + energy / (sum(last) / len(last)), short_kw
+
+
+def zone_runtimes(readings, at_time, homes, zone):
+    """
+    For the homes of a zone that loses (or would lose) grid power: each battery's charge
+    now and its estimated hours left (battery_runtime). Listed most at risk first:
+    medical, then vulnerable, then shortest runtime. Plus the zone's critical buildings.
+    """
+    ids = {r["battery_id"] for r in homes}
+    coming = {}
+    for row in readings:
+        if row["battery_id"] in ids and row["time"] >= at_time:
+            coming.setdefault(row["battery_id"], []).append(row)
     runtimes = []
     for r in homes:
-        if r["charge_pct"] is None:
-            runtimes.append({"battery_id": r["battery_id"], "household_type": r["household_type"], "hours": None})
-            continue
-        stored_kwh = r["charge_pct"] / 100 * simulator.BATTERY_CAPACITY_KWH
+        hours, short_kw = battery_runtime(r, sorted(coming[r["battery_id"]], key=lambda x: x["time"]))
         runtimes.append({"battery_id": r["battery_id"], "household_type": r["household_type"],
-                         "hours": stored_kwh / max(r["home_usage_kw"], 0.3)})
+                         "charge_pct": r["charge_pct"], "need_kw": round(demand_kw(r), 1),
+                         "hours": hours, "short_kw": short_kw})
     known = sorted((x for x in runtimes if x["hours"] is not None), key=lambda x: x["hours"])
-    order = {"medical": 0, "vulnerable": 1, "regular": 2}
-    runtimes.sort(key=lambda x: (order.get(x["household_type"], 3),
+    runtimes.sort(key=lambda x: (HOUSEHOLD_ORDER.get(x["household_type"], 3),
                                  x["hours"] if x["hours"] is not None else -1))
     return {
         "homes": len(homes),
@@ -490,27 +548,102 @@ def zone_runtimes(homes, zone):
 
 
 # ---------------------------------------------------------------------------
-# Blackouts (crisis mode): zones that have lost grid power right now
+# Blackouts (crisis mode): zones that have lost grid power, and what to do about it
 # ---------------------------------------------------------------------------
+SAVE_SHARE = 0.3          # homes asked to save power cut about this share of their use
+RUNNING_LOW_H = 2         # a home with less than this many hours left is "running low"
+
+
 def blackout_report(readings, at_time, outages):
     """
-    outages: the crisis's outages active now (from crisis.blackouts / dark_zones_at),
-    each {"zone", "start", "end", "cause"}. Returns one entry per dark zone with its
-    homes' battery runtimes and when power is expected back, shortest runtime first.
-    A home whose runtime is shorter than the outage will run out before power returns.
+    outages: the crisis's outages active now, each {"zone", "start", "end", "cause"}.
+    For each dark zone: its homes' battery runtimes (medical and vulnerable first),
+    which homes run out before power returns, its critical buildings' backup left, and
+    a plan of recommended steps for the dispatcher. Zones with the earliest trouble first.
     """
     rows = [r for r in readings if r["time"] == at_time]
     hour = int(at_time[11:13]) + int(at_time[14:16]) / 60
     report = []
     for o in outages:
         homes = [r for r in rows if r["zone"] == o["zone"]]
-        info = zone_runtimes(homes, o["zone"])
-        hours_left = o["end"] - hour                       # until power is back
+        info = zone_runtimes(readings, at_time, homes, o["zone"])
+        hours_left = o["end"] - hour                     # until power is back (utility's estimate)
+        for x in info["runtimes"]:
+            x["runs_out"] = x["hours"] is not None and x["hours"] < hours_left
+            x["low"] = x["hours"] is not None and x["hours"] < RUNNING_LOW_H
+        # Critical buildings: their own backup started when the zone went dark
+        for b in info["buildings"]:
+            b["backup_left_h"] = max(0.0, b["backup_hours"] - (hour - o["start"]))
+            b["runs_out"] = b["backup_left_h"] < hours_left
         info.update(zone=o["zone"], cause=o["cause"], start=o["start"], end=o["end"],
                     hours_left=hours_left,
-                    run_out=[x for x in info["runtimes"] if x["hours"] is not None and x["hours"] < hours_left])
+                    run_out=[x for x in info["runtimes"] if x["runs_out"]],
+                    no_power_now=[x for x in info["runtimes"] if x["hours"] == 0 or x["short_kw"] > 0.05])
+        info["steps"] = dark_zone_plan(info)
         report.append(info)
-    return sorted(report, key=lambda z: z["shortest"]["hours"] if z["shortest"] else 99)
+    # Earliest trouble first: a medical home running out beats everything
+    return sorted(report, key=lambda z: (not any(x["household_type"] == "medical" for x in z["run_out"]),
+                                         z["shortest"]["hours"] if z["shortest"] else 99))
+
+
+def dark_zone_plan(z):
+    """
+    Recommended steps for a zone without grid power, gentlest first. Like the relief
+    ladder, nothing happens until the dispatcher approves a step. Each step says what it
+    would achieve. Medical homes and critical buildings come first for help.
+      1. Ask homes to save power: everyone except medical homes cuts non-essential use
+         (about 30%), so their batteries last longer.
+      2. Check on medical and vulnerable homes running low or running out before power
+         returns (a call or a visit).
+      3. Bring portable backup batteries to medical homes that will run out first.
+      4. Ask the utility to restore this zone first (it has medical homes or critical
+         buildings whose backup won't last).
+    """
+    steps = []
+    savers = [x for x in z["runtimes"] if x["household_type"] != "medical" and x["hours"]]
+    # Saving 30% makes a battery last 1 / 0.7 = about 1.4 times as long
+    saved = [x for x in savers if x["runs_out"] and x["hours"] / (1 - SAVE_SHARE) >= z["hours_left"]]
+    gain = (sum(x["hours"] for x in savers) / len(savers)) * (1 / (1 - SAVE_SHARE) - 1) if savers else 0
+    steps.append({
+        "number": 1, "title": "Ask homes to save power",
+        "what": (f"Ask the {plural(len(savers), 'non-medical home')} with charge left to cut non-essential "
+                 f"use ({simulator.COUNTRY['flexible_load']['name']}, extra lights, thermostat a few "
+                 f"degrees) by about "
+                 f"{SAVE_SHARE:.0%}. Batteries last about {gain:.1f} h longer on average"
+                 + (f"; {plural(len(saved), 'home')} would then last until power returns." if saved else ".")),
+        # only worth asking if someone would otherwise run out or is running low
+        "needed": bool(savers) and any(x["runs_out"] or x["low"] for x in savers),
+    })
+    at_risk = [x for x in z["runtimes"] if x["household_type"] in ("medical", "vulnerable")
+               and (x["runs_out"] or x["low"] or x["hours"] is None or x["short_kw"] > 0.05)]
+    steps.append({
+        "number": 2, "title": "Check on medical and vulnerable homes",
+        "what": ("Call or visit, most urgent first: " + ", ".join(
+            f"{x['battery_id']} ({x['household_type']}, "
+            + ("unknown runtime" if x["hours"] is None else f"{x['hours']:.1f} h left") + ")"
+            for x in at_risk) + "." if at_risk else "No medical or vulnerable home is running low."),
+        "needed": bool(at_risk),
+    })
+    medical_out = [x for x in z["run_out"] if x["household_type"] == "medical"]
+    steps.append({
+        "number": 3, "title": "Bring portable backup to medical homes",
+        "what": ("Send a portable backup battery to " + ", ".join(
+            f"{x['battery_id']} (runs out in {x['hours']:.1f} h)" for x in medical_out)
+            + f", before power returns in {z['hours_left']:.1f} h." if medical_out
+            else "Every medical home's battery should last until power returns."),
+        "needed": bool(medical_out),
+    })
+    buildings_out = [b for b in z["buildings"] if b["runs_out"]]
+    why = ([f"{len(medical_out)} medical home{'s' if len(medical_out) != 1 else ''} running out"] if medical_out else []) \
+        + [f"{b['name']} ({'no backup' if not b['backup_hours'] else f'{b['backup_left_h']:.1f} h of backup left'})"
+           for b in buildings_out]
+    steps.append({
+        "number": 4, "title": "Ask the utility to restore this zone first",
+        "what": ("Request priority repair for " + z["zone"] + ": " + "; ".join(why) + "."
+                 if why else "Not needed: everyone critical here can wait for the planned restore."),
+        "needed": bool(why),
+    })
+    return steps
 
 
 # ---------------------------------------------------------------------------
@@ -540,8 +673,10 @@ def temp(celsius):
     return f"{celsius:.0f}°C"
 
 
-def event_label():
-    """The country's stress event, e.g. 'Heat wave' or 'Cold snap'."""
+def event_label(readings=None):
+    """The day's stress event, e.g. 'Heat wave' or 'Cold snap' (the crisis in crisis mode)."""
+    if readings:
+        return readings[0].get("event_name", simulator.COUNTRY["stress_event"]["name"])
     return simulator.COUNTRY["stress_event"]["name"]
 
 
@@ -576,7 +711,8 @@ def problem_and_action(r):
     return 3, f"{r['battery_id']} low backup", f"check on {who}: its backup is running low"
 
 
-def summary(readings, at_time, results, approved_steps=(), shutoff_approved=False, blackout=()):
+def summary(readings, at_time, results, approved_steps=(), shutoff_approved=False, blackout=(),
+            dark_approved=()):
     """
     Three short lines for the dispatcher:
         status  - how many batteries need attention, and why
@@ -584,6 +720,7 @@ def summary(readings, at_time, results, approved_steps=(), shutoff_approved=Fals
         action  - what to do first
     approved_steps: (zone, step number) pairs already approved at this time.
     blackout: blackout_report() for the zones dark right now (crisis mode), if any.
+    dark_approved: (zone, step number) pairs of dark-zone steps already approved.
     """
     # --- Status: count and name the urgent batteries ---
     needs = sorted([r for r in results if r["category"] == NEEDS_DISPATCHER],
@@ -629,7 +766,7 @@ def summary(readings, at_time, results, approved_steps=(), shutoff_approved=Fals
 
     if strained:
         listed = ", ".join(f"{z} ({stress_at[z][at_time]:.0f}% of capacity)" for z in strained)
-        outlook = f"**{event_label()}: {plural(len(strained), 'zone')} strained now:** {listed}."
+        outlook = f"**{event_label(readings)}: {plural(len(strained), 'zone')} strained now:** {listed}."
         eases = next((t for t in times[i + 1:]
                       if all(stress_at[z][t] < STRAINED_GRID for z in stress_at if z not in dark)), None)
         if coming:
@@ -639,7 +776,7 @@ def summary(readings, at_time, results, approved_steps=(), shutoff_approved=Fals
     elif coming:
         z, t = min(coming.items(), key=lambda kv: kv[1])
         peak = max(stress_at[z][t2] for t2 in ahead)
-        outlook = (f"**{event_label()} expected: {z} strained from {clock(t)}** "
+        outlook = (f"**{event_label(readings)} expected: {z} strained from {clock(t)}** "
                    f"(up to {peak:.0f}% of capacity).")
         if len(coming) > 1:
             outlook += f" {len(coming) - 1} more zone{'s' if len(coming) > 2 else ''} later."
@@ -652,6 +789,12 @@ def summary(readings, at_time, results, approved_steps=(), shutoff_approved=Fals
         outlook += (f" **Wildfire risk {fire['level']} in {fire['zone']}**: batteries there hold an "
                     f"80% reserve.")
 
+    # Crisis forecast: batteries are filling up before it hits
+    now_row = next(r for r in readings if r["time"] == at_time)
+    if now_row.get("crisis_reserve_pct") == simulator.PRECHARGE_PCT:
+        outlook += (f" **{event_label(readings)} forecast:** batteries are pre-charging to "
+                    f"{simulator.PRECHARGE_PCT}% so homes have backup if power goes out.")
+
     # Blackout (crisis mode) goes first: it's the biggest news
     if blackout:
         names = ", ".join(z["zone"] for z in blackout)
@@ -663,14 +806,17 @@ def summary(readings, at_time, results, approved_steps=(), shutoff_approved=Fals
     # --- Action: dark zones first, then strained zones (most strained first), then urgent batteries ---
     actions = []
     for z in blackout:
-        critical = [x for x in z["run_out"] if x["household_type"] in ("medical", "vulnerable")]
-        if critical:
-            actions.append(f"{z['zone']}: {plural(len(critical), 'critical home')} will run out of battery "
-                           f"before power returns ({', '.join(x['battery_id'] for x in critical)}); "
-                           f"arrange backup or a welfare check")
-        elif z["run_out"]:
-            actions.append(f"{z['zone']}: {plural(len(z['run_out']), 'home')} may run out of battery "
-                           f"before power returns; ask them to save power")
+        # Most urgent first: medical homes (step 3), then the zone's restore priority
+        # (critical buildings, step 4), then checks on medical/vulnerable homes, then saving
+        urgency = {3: 0, 4: 1, 2: 2, 1: 3}
+        todo = sorted([s for s in z["steps"] if s["needed"] and (z["zone"], s["number"]) not in dark_approved],
+                      key=lambda s: urgency[s["number"]])
+        if todo:
+            medical = [x for x in z["run_out"] if x["household_type"] == "medical"]
+            why = (f"{plural(len(medical), 'medical home')} run{'s' if len(medical) == 1 else ''} out first"
+                   if medical else f"{plural(len(z['run_out']), 'home')} may run out before power returns"
+                   if z["run_out"] else "no grid power")
+            actions.append(f"{z['zone']} ({why}): approve step {todo[0]['number']}, {todo[0]['title'].lower()}")
     for plan in [p for p in relief_plans(readings, at_time) if p["zone"] not in dark][:2]:
         z = plan["zone"]
         todo = [s for s in plan["steps"] if s["needed"] and (z, s["number"]) not in approved_steps]

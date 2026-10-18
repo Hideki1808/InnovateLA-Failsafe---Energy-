@@ -88,6 +88,23 @@ buildings_factor = 1.25                  # critical buildings' load goes up this
 price = 0.50                             # $ per kWh during the event
 peak_price = 1.20                        # from 4 pm until it ends (wholesale spikes can go far higher)
 
+# Crisis mode: how a heat wave or cold snap hits this country, for a severity-3 crisis
+# (approx.). Severity scales these (1 = a third as strong, 5 = two-thirds stronger).
+# Thermostat nudge and prices come from [stress_event] above.
+[countries.us_texas.crisis_effects.heat_wave]
+temperature_change_c = 8                 # degrees warmer than a typical day of the month
+humidity_change_pct = -15
+extra_home_load_kw = [3.0, 5.0]          # air conditioning, per home
+other_customers_factor = 1.5
+buildings_factor = 1.25
+
+[countries.us_texas.crisis_effects.cold_snap]
+temperature_change_c = -12
+humidity_change_pct = 0
+extra_home_load_kw = [3.0, 6.0]          # many Texas homes heat with electric resistance heaters
+other_customers_factor = 1.6
+buildings_factor = 1.2
+
 [countries.us_texas.crisis]                # crisis mode settings (approx.)
 conflict_chance_per_month = 0.01          # chance of a conflict / grid attack in any month (small, fixed)
 earthquakes_per_year_if_no_data = 0.15     # FALLBACK only, if data/earthquakes_us_texas.json is missing
@@ -215,6 +232,21 @@ other_customers_factor = 1.5
 buildings_factor = 1.2
 price = 0.55                             # € per kWh during the event
 peak_price = 0.80                        # from 16:00 until it ends
+
+# Crisis mode: how a heat wave or cold snap hits this country, severity 3 (approx.)
+[countries.de_munich.crisis_effects.heat_wave]
+temperature_change_c = 8
+humidity_change_pct = -10
+extra_home_load_kw = [0.3, 0.8]          # few homes have AC: fans, fridges working harder
+other_customers_factor = 1.15
+buildings_factor = 1.15
+
+[countries.de_munich.crisis_effects.cold_snap]
+temperature_change_c = -14
+humidity_change_pct = 0
+extra_home_load_kw = [2.0, 4.0]          # heat pumps and electric heaters, per home
+other_customers_factor = 1.5
+buildings_factor = 1.2
 
 [countries.de_munich.crisis]                # crisis mode settings (approx.)
 conflict_chance_per_month = 0.01          # chance of a conflict / grid attack in any month (small, fixed)

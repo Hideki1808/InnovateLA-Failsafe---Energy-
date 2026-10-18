@@ -82,9 +82,8 @@ Replace the single scripted stress event with crises that depend on the time of 
   trigger preventive power shutoffs in exposed zones.
 - **Severity scale**: each crisis gets a level (1 minor to 5 extreme) that sets how hard
   it hits load, prices and outages, shown clearly on screen.
-- (Random blackouts, full blackout, seed/Reroll and dark-zone runtimes: done, see the
-  Crisis panel notes under Known gaps. Still to do: the crisis replaces the scripted
-  heat wave / cold snap in the power simulation, and dark zones stop drawing grid power.)
+- (Random blackouts, full blackout, seed/Reroll, dark-zone runtimes, the crisis driving
+  the power simulation and pre-charging: done, see the Crisis panel notes under Known gaps.)
 
 Triage, the relief ladder and approvals keep working in crisis mode; the dispatcher
 still approves every high-impact step.
@@ -127,8 +126,23 @@ Known gaps today (fix as part of the crisis-mode work):
   earthquake: anywhere; heat/cold: least capacity; attack: zones with critical
   buildings), restore time longer at higher severity. Dark zones show black on the map;
   the Response ladder's Blackout card lists homes, runtimes and who runs out before power
-  returns (rules.blackout_report); the summary puts the blackout first. Limitation: the
-  crisis doesn't drive the power simulation yet (the scripted heat wave still runs).
+  returns (rules.blackout_report); the summary puts the blackout first.
+- In crisis mode the crisis drives the simulation (simulator.simulate(crisis=, outages=)):
+  the scripted heat wave / cold snap is off; a heat wave or cold snap crisis raises load
+  by [crisis_effects] in the config (severity 3 values, scaled by severity / 3); during a
+  forecast's warning batteries pre-charge to 95% (fast); while any crisis is on they
+  don't discharge below 50% (but don't charge up to it). Dark zones draw nothing from
+  the grid: each battery powers its home (up to its max kW, down to empty, can't
+  charge); what it can't cover is "unserved_kw"; buildings run on their own backup.
+  Crisis mode Off gives exactly the same day as before (checked).
+- Dark-zone runtimes (rules.battery_runtime): stored kWh walked forward 15 min at a time
+  through the home's expected need (usage + unserved), capped at the battery's max kW.
+  rules.dark_zone_plan gives 4 approvable steps per dark zone: save power (30%), check on
+  medical/vulnerable homes, portable backup for medical homes running out, ask the
+  utility to restore the zone first. The summary recommends the most urgent first
+  (medical, critical buildings, checks, saving). Triage: a home in a dark zone whose
+  battery can't cover it is Watch (Needs dispatcher if critical). Approvals are recorded
+  but don't change the simulation (like the relief ladder).
 - The saved earthquakes are used for crisis chances, not shown on screen yet.
 
 ## Tech stack

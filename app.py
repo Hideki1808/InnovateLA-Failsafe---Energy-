@@ -37,15 +37,21 @@ SEVERITY = {rules.NEEDS_DISPATCHER: 0, rules.WATCH: 1, rules.CAN_WAIT: 2, rules.
 # Make the fake data once per country and remember it (so the page doesn't redo it on
 # every click)
 @st.cache_data
-def load_readings(country_id, month):
+def load_readings(country_id, month, crisis_settings=None):
+    """The simulated day. crisis_settings (crisis mode): the Crisis panel's settings; the
+    crisis then replaces the scripted event, batteries pre-charge during its warning, and
+    dark zones get no grid power (their homes run on their batteries)."""
     simulator.use_country(country_id)
-    return simulator.simulate(month=month)
+    if crisis_settings is None:
+        return simulator.simulate(month=month)
+    c, outages = get_crisis(country_id, month, *crisis_settings)
+    return simulator.simulate(month=month, crisis=c, outages=outages)
 
 
 @st.cache_data
-def run_rules(country_id, month, at_time):
+def run_rules(country_id, month, crisis_settings, at_time):
     simulator.use_country(country_id)
-    return pd.DataFrame(rules.triage(load_readings(country_id, month), at_time))
+    return pd.DataFrame(rules.triage(load_readings(country_id, month, crisis_settings), at_time))
 
 
 # Page look: the theme is in .streamlit/config.toml; style.py adds the few extras
@@ -98,7 +104,7 @@ st.session_state.setdefault("month", simulator.DAY_START.month)   # the demo dat
 
 def reset_demo():
     """A different country or month starts the demo over: back to noon, nothing approved yet."""
-    for key in ("now", "playing", "pause_note", "seen", "approved", "shutoffs", "next_time"):
+    for key in ("now", "playing", "pause_note", "seen", "approved", "shutoffs", "dark_approved", "next_time"):
         st.session_state.pop(key, None)
 
 
@@ -117,9 +123,6 @@ title_col.html(style.label(f"Live grid dispatch · {COUNTRY['region']}")
                + '<p class="brand">Home Battery Fleet</p>')
 country_col.caption("Simulated fleet. Country numbers are approximate.")
 
-readings = load_readings(country_id, month)
-data = pd.DataFrame(readings)
-
 live_tab, earn_tab = st.tabs(["Live dispatch", "Normal day earnings"])
 
 # ===========================================================================
@@ -127,9 +130,7 @@ live_tab, earn_tab = st.tabs(["Live dispatch", "Normal day earnings"])
 # ===========================================================================
 with live_tab:
     # --- Playback: run the day forward for the live demo ---
-    times = simulator.all_times(readings)
     DEMO_START = "2026-10-17 12:00"        # calm before the stress event
-    EVENT = COUNTRY["stress_event"]          # heat wave, cold snap... (from the config file)
     SPEEDS = {"Slow": 2.0, "Normal": 1.0, "Fast": 0.4}   # seconds per 15-minute step
 
     # --- Crisis mode: a random or hand-picked crisis, with a seed so it can be replayed ---
@@ -145,6 +146,7 @@ with live_tab:
         """A new random seed: a new outcome (a different crisis or different dark zones)."""
         st.session_state.crisis_seed = random.randint(1, 99_999)
         st.session_state.seen = set()
+        st.session_state.dark_approved = set()
 
 
     with st.container(key="panel_crisis"):
@@ -165,11 +167,22 @@ with live_tab:
                     help="Force a full blackout: cut grid power to every zone")
 
     if crisis_on:
-        the_crisis, outages = get_crisis(country_id, month, st.session_state.crisis_mode,
-                                         st.session_state.crisis_type, st.session_state.crisis_severity,
-                                         st.session_state.crisis_seed, crisis_on and st.session_state.full_blackout)
+        crisis_settings = (st.session_state.crisis_mode, st.session_state.crisis_type,
+                           st.session_state.crisis_severity, st.session_state.crisis_seed,
+                           st.session_state.full_blackout)
+        the_crisis, outages = get_crisis(country_id, month, *crisis_settings)
+        # The crisis replaces the scripted heat wave / cold snap
+        EVENT = {"name": the_crisis["name"], "start_hour": the_crisis["start_hour"],
+                 "end_hour": min(int(the_crisis["end_hour"]), 23)}
     else:
-        the_crisis, outages = None, []
+        crisis_settings, the_crisis, outages = None, None, []
+        EVENT = COUNTRY["stress_event"]      # heat wave, cold snap... (from the config file)
+    st.session_state.setdefault("dark_approved", set())   # approved dark-zone steps: (zone, start, step)
+
+    # The day's readings (with the crisis, if any)
+    readings = load_readings(country_id, month, crisis_settings)
+    data = pd.DataFrame(readings)
+    times = simulator.all_times(readings)
 
     st.session_state.setdefault("now", DEMO_START)
     st.session_state.setdefault("playing", False)
@@ -201,7 +214,7 @@ with live_tab:
 
     now = st.session_state.now
     current = data[data["time"] == now]
-    results = run_rules(country_id, month, now)
+    results = run_rules(country_id, month, crisis_settings, now)
 
     # Spot new events: a battery that needs the dispatcher (or changes why), a battery
     # going silent, or the grid becoming strained. Announce each once.
@@ -281,7 +294,7 @@ with live_tab:
     event_on = bool(current.iloc[0]["stress_event"])      # is the heat wave / cold snap on?
     st.html(style.stats([
         (rules.clock(now), f"{rules.temp(current.iloc[0]['outdoor_temp_c'])} outside"
-                           + (f" · {rules.event_label()}" if event_on else ""), False),
+                           + (f" · {rules.event_label(readings)}" if event_on else ""), False),
         (needs, "need the dispatcher", needs > 0),
         (int(counts.get(rules.WATCH, 0)), "to watch", False),
         (int(counts.get(rules.CAN_WAIT, 0)), "can wait", False),
@@ -449,9 +462,11 @@ with live_tab:
         st.session_state.setdefault("approved", set())
         approved_now = {(zone, n) for t, zone, n in st.session_state.approved if t == now}
         blackout = rules.blackout_report(readings, now, outages_now)
+        dark_approved_now = {(zone, n) for zone, start, n in st.session_state.dark_approved
+                             if any(o["zone"] == zone and o["start"] == start for o in outages_now)}
         brief = rules.summary(readings, now, results.to_dict("records"), approved_now,
                               shutoff_approved=bool(fire_plan and fire_plan["zone"] in shut_off_now),
-                              blackout=blackout)
+                              blackout=blackout, dark_approved=dark_approved_now)
         st.html(style.label("What's happening") + style.pill(brief["level"]))
         st.markdown(f"{brief['status']}  \n{brief['outlook']}  \n{brief['action']}")
 
@@ -488,39 +503,66 @@ with live_tab:
                 def reset_approvals():
                     st.session_state.approved = set()
                     st.session_state.shutoffs = {}
+                    st.session_state.dark_approved = set()
 
 
                 def approve_shutoff(zone, start, until):
                     st.session_state.shutoffs[zone] = (start, until)
 
 
-                # --- Blackout (crisis mode): zones without grid power and their battery runtimes ---
+                # --- Blackout (crisis mode): dark zones, who runs out first, and what to do ---
+                def approve_dark(key):
+                    st.session_state.dark_approved.add(key)
+
+
                 if blackout:
                     with st.container(border=True):
-                        st.html(style.label("Blackout") + style.pill("error"))
+                        st.html(style.label("Blackout: homes on their batteries") + style.pill("error"))
+                        st.caption("Hours left = the energy stored in each battery, used at that home's "
+                                   "expected need over the coming hours (including the extra heating or "
+                                   "cooling of a cold snap or heat wave). Medical and vulnerable homes first.")
                         for z in blackout:
                             back = (f"about {rules._hour_clock(z['end'])}" if z["end"] < 24
                                     else "not before midnight")
                             st.markdown(f"**{z['zone']}**: no grid power since {rules._hour_clock(z['start'])} "
                                         f"({z['cause']}); expected back {back}, in {z['hours_left']:.1f} h. "
-                                        f"{z['homes']} homes on their batteries ({z['medical']} medical, "
-                                        f"{z['vulnerable']} vulnerable).")
-                            if z["shortest"]:
-                                note = (f"Shortest runtime {z['shortest']['hours']:.1f} h ({z['shortest']['battery_id']}), "
-                                        f"typical {z['median_hours']:.1f} h. ")
-                                note += (f"{rules.plural(len(z['run_out']), 'home')} will run out before power returns: "
-                                         + ", ".join(f"{x['battery_id']} ({x['household_type']})" for x in z["run_out"])
-                                         + "." if z["run_out"] else "Every battery should last until power returns.")
-                                st.caption(note)
+                                        f"{z['homes']} homes ({z['medical']} medical, {z['vulnerable']} vulnerable)"
+                                        + (f": **{rules.plural(len(z['run_out']), 'home')} will run out first.**"
+                                           if z["run_out"] else ": every battery should last."))
+
+                            def status(x):
+                                if x["hours"] is None:
+                                    return "Unknown (silent)"
+                                if x["hours"] < 0.05 or x["short_kw"] > 0.05:
+                                    return "No power now" if x["hours"] < 0.05 else "Partly covered"
+                                if x["runs_out"]:
+                                    return "Runs out first"
+                                return "Running low" if x["low"] else "Lasts"
+                            st.dataframe(pd.DataFrame([{
+                                "Battery": x["battery_id"], "Home": x["household_type"],
+                                "Charge": None if x["charge_pct"] is None else f"{x['charge_pct']:.0f}%",
+                                "Needs": f"{x['need_kw']:.1f} kW",
+                                "Hours left": None if x["hours"] is None else round(x["hours"], 1),
+                                "Status": status(x),
+                            } for x in z["runtimes"]]), hide_index=True, width="stretch",
+                                height=min(36 * (len(z["runtimes"]) + 1) + 2, 260))
                             if z["buildings"]:
-                                st.caption("Critical buildings on their own backup: " + ", ".join(
-                                    b["name"] + (f" ({b['backup'].lower()}, {b['backup_hours']} h)"
-                                                 if b["backup_hours"] else " (no backup)") for b in z["buildings"]))
-                            with st.expander(f"Homes and battery runtimes ({z['homes']})"):
-                                st.write(", ".join(
-                                    f"{x['battery_id']} ({x['household_type']}): "
-                                    + (f"{x['hours']:.1f} h" if x["hours"] is not None else "unknown (silent)")
-                                    for x in z["runtimes"]))
+                                st.caption("Critical buildings on their own backup: " + "; ".join(
+                                    b["name"] + (" (no backup: without power now)" if not b["backup_hours"] else
+                                                 f" ({b['backup'].lower()}, {b['backup_left_h']:.1f} h left"
+                                                 + (", runs out before power returns)" if b["runs_out"] else ")"))
+                                    for b in z["buildings"]))
+                            # Recommended steps: nothing happens until the dispatcher approves
+                            for s in z["steps"]:
+                                key = (z["zone"], z["start"], s["number"])
+                                st.markdown(f"**{s['number']}. {s['title']}**: {s['what']}")
+                                if key in st.session_state.dark_approved:
+                                    st.success("Approved (simulated: the request goes out; the estimate above "
+                                               "is what it would achieve).")
+                                elif s["needed"]:
+                                    st.button("Approve", key=f"dark_{z['zone']}_{z['start']}_{s['number']}",
+                                              type="primary" if s["number"] == 1 else "secondary",
+                                              on_click=approve_dark, args=(key,))
 
                 # --- Wildfire precaution: a planned shutoff of the riskiest zone ---
                 if fire_plan or shut_off_now:
@@ -571,6 +613,11 @@ with live_tab:
                 for zone, z in zone_now.sort_values("zone_stress", ascending=False).iterrows():
                     state = ("Strained" if z["zone_stress"] >= rules.STRAINED_GRID
                              else "Busy" if z["zone_stress"] >= rules.BUSY_GRID else "OK")
+                    if zone in {o["zone"] for o in outages_now}:      # blacked out: nothing flows
+                        lines.append(f'<div><span style="display:inline-block;width:12px;height:12px;border-radius:2px;'
+                                     f'background:#1c1c1e;margin-right:8px"></span><b>{zone}</b>: '
+                                     f'no grid power <span style="opacity:.65">(see Blackout above)</span></div>')
+                        continue
                     lines.append(f'<div><span style="display:inline-block;width:12px;height:12px;border-radius:2px;'
                                  f'background:{ZONE_DOT[state]};margin-right:8px"></span><b>{zone}</b>: '
                                  f'{z["zone_stress"]:.0f}% <span style="opacity:.65">({state.lower()}, '
@@ -640,7 +687,7 @@ with live_tab:
                             st.error(f"Even with every step, {zone} is still about {plan['shortfall_kw']:.0f} kW short. "
                                      f"Medical homes are never cut: escalate to the utility.")
 
-                if plans or shut_off_now:
+                if plans or shut_off_now or st.session_state.dark_approved:
                     st.button("Reset approvals", on_click=reset_approvals)
 
 
