@@ -145,6 +145,20 @@ def pill(level):
     return f'<span class="pill" style="background:{bg};color:{fg}">{text}</span>'
 
 
+FIRE_PILL = {  # wildfire risk level -> (background, text color)
+    "Extreme": (CORAL, "#ffffff"),
+    "High": ("#fdecea", CORAL),
+    "Moderate": ("#fdf5df", "#9a6b00"),
+    "Low": ("#e8f5ee", "#1f7a45"),
+}
+
+
+def fire_pill(level):
+    """A small pill like "WILDFIRE RISK HIGH", colored by level."""
+    bg, fg = FIRE_PILL[level]
+    return f'<span class="pill" style="background:{bg};color:{fg}">Wildfire risk {escape(level)}</span>'
+
+
 def alert_list(rows):
     """rows: dicts with battery_id, household_type, zone, category, reason, silent_guess."""
     out = []

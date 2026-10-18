@@ -194,40 +194,81 @@ def _weather_crises_from_config(country, month):
     }
 
 
+# ---------------------------------------------------------------------------
+# Wildfire risk index: hot + dry + windy = high
+# ---------------------------------------------------------------------------
+INDEX_SCALE = 160          # turns the 0-1 fire-weather score into the 0-100 index (see below)
+RISK_LEVELS = [(70, "Extreme"), (50, "High"), (25, "Moderate"), (0, "Low")]
+HIGH_RISK = 50             # from here on (High or Extreme) batteries keep a big reserve and a
+                           # precautionary shutoff can be planned
+FIRE_RESERVE_PCT = 80      # reserve batteries keep in High/Extreme-risk zones
+NORMAL_RESERVE_PCT = 20    # their usual reserve
+
+
+def fire_weather_score(temp_c, humidity_pct, wind_kmh):
+    """
+    How fire-friendly the weather is, 0 to 1 = heat x dryness x wind:
+        heat    = how far the temperature is from 10 °C toward 40 °C   (0 at 10 °C, 1 at 40 °C)
+        dryness = 1 - humidity                                        (0 when saturated, 1 bone dry)
+        wind    = 0.3 when calm, rising to 1.0 at 40 km/h             (wind spreads fire)
+    They multiply, so it takes all three at once: a hot but humid day stays low.
+    """
+    heat = _clamp((temp_c - 10) / 30, 0, 1)
+    dryness = _clamp(1 - humidity_pct / 100, 0, 1)
+    windy = 0.3 + 0.7 * _clamp(wind_kmh / 40, 0, 1)
+    return heat * dryness * windy
+
+
+def index_from_weather(temp_c, humidity_pct, wind_kmh):
+    """
+    The wildfire risk index, 0-100 = the fire-weather score x 160 (capped at 100).
+    Why 160: in the saved 2025 data a typical Austin August afternoon scores about 0.25
+    (index 40, Moderate) and its driest, windiest days about 0.35-0.5 (index 55-80,
+    High to Extreme), which matches how often fire-weather warnings are issued there.
+    """
+    return int(min(100, round(INDEX_SCALE * fire_weather_score(temp_c, humidity_pct, wind_kmh))))
+
+
+def risk_level(index):
+    """0-100 -> "Low" (under 25), "Moderate" (25-49), "High" (50-69), "Extreme" (70+)."""
+    return next(name for floor, name in RISK_LEVELS if index >= floor)
+
+
+def zone_fire_index(region_index, exposure):
+    """
+    A zone's own risk: the region's index scaled by how exposed the zone is (0-1, from the
+    config: brush, forest, greenbelts). A fully exposed zone (1.0) gets the full index, a
+    fully built-up one (0.0) 40% of it: index x (0.4 + 0.6 x exposure).
+    """
+    return int(round(region_index * (0.4 + 0.6 * exposure)))
+
+
 def wildfire_risk_index(country_id, month):
     """
-    A 0-100 wildfire risk index for the month. FIRST VERSION: step 5 replaces this with
-    the full wildfire risk index; anything that needs the index should call this function.
-
-    Every hour gets a "fire weather" score = heat x dryness x wind:
-        heat    = how far the temperature is from 10 °C toward 40 °C   (0 to 1)
-        dryness = 1 - humidity                                        (0 to 1)
-        wind    = 0.3 calm ... 1.0 at 40 km/h or more                 (wind spreads fire)
-    The index is the average of each day's worst hour, times 100. Hot, dry, windy months
-    score high; cold or humid ones near 0.
+    The month's typical wildfire risk index (0-100) and whether it's from real data.
+    Each day gets the index of its worst hour; the month's index is the average day.
+    (Used for how likely a wildfire is that month. The demo day's hour-by-hour risk is
+    worked out in simulator.py with the same formula.)
     """
-    def score(temp, humidity, wind):
-        heat = _clamp((temp - 10) / 30, 0, 1)
-        dryness = 1 - humidity / 100
-        windy = 0.3 + 0.7 * _clamp(wind / 40, 0, 1)
-        return heat * dryness * windy
-
     hours = _weather_hours(str(DATA_DIR / f"weather_{country_id}.json"))
     if hours:
-        this_month = [score(r[1], r[2], r[3]) for r in hours if r[0] == month]
+        this_month = [index_from_weather(r[1], r[2], r[3]) for r in hours if r[0] == month]
         days = [max(this_month[d:d + 24]) for d in range(0, len(this_month), 24)]
-        return round(100 * sum(days) / len(days)), "real"
+        return round(sum(days) / len(days)), "real"
     t = simulator.COUNTRIES[country_id]["typical_weather"]
     i = month - 1
-    return round(100 * score(t["temp_high_c"][i], t["humidity_pct"][i] - 15, t["wind_kmh"][i])), "simulated"
+    # No saved weather: a typical afternoon from the config's monthly normals, a bit drier
+    # than the day's average humidity (afternoons are the driest part of the day)
+    return index_from_weather(t["temp_high_c"][i], t["humidity_pct"][i] - 15, t["wind_kmh"][i]), "simulated"
 
 
 def _wildfire(country_id, month):
     index, source = wildfire_risk_index(country_id, month)
-    # WILDFIRE: chance grows faster than the index (index 50 -> 0.25, index 80 -> 0.64),
-    # so only really hot, dry, windy months carry a serious risk.
+    # WILDFIRE: higher risk -> more likely. The chance grows faster than the index
+    # (index 25 -> 6%, 50 -> 25%, 80 -> 64%), so only really hot, dry, windy months carry a
+    # serious chance.
     return {"chance": _clamp((index / 100) ** 2), "intensity": index / 100, "source": source,
-            "basis": f"wildfire risk index {index}/100"}
+            "basis": f"wildfire risk index {index}/100 ({risk_level(index)})"}
 
 
 def _earthquake(country_id, country):

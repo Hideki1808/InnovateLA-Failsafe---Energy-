@@ -330,7 +330,8 @@ def relief_plan(readings, at_time, zone):
     for r in healthy:
         if r["priority"] == "critical":
             continue
-        spare_kwh = (r["charge_pct"] - RESERVE_PCT) / 100 * simulator.BATTERY_CAPACITY_KWH
+        reserve = max(RESERVE_PCT, r.get("battery_reserve_pct", RESERVE_PCT))   # 80% in wildfire-risk zones
+        spare_kwh = (r["charge_pct"] - reserve) / 100 * simulator.BATTERY_CAPACITY_KWH
         can_keep_up_kw = min(simulator.BATTERY_MAX_KW, spare_kwh / SUPPORT_HOURS)
         more = can_keep_up_kw - max(r["battery_kw"], 0)
         if more > 0.1:
@@ -429,6 +430,62 @@ def relief_plans(readings, at_time):
 
 
 # ---------------------------------------------------------------------------
+# Wildfire: precautionary shutoff of the riskiest zone (like California's Public Safety
+# Power Shutoffs). Only suggested when that zone's risk is High or Extreme; it happens
+# only if the dispatcher approves it.
+# ---------------------------------------------------------------------------
+def shutoff_plan(readings, at_time):
+    """
+    None if no zone is at High or Extreme wildfire risk. Otherwise a plan for the riskiest
+    zone: who'd lose grid power, how long their batteries would last, and when the risk
+    is expected to ease (the end of the shutoff).
+    """
+    import crisis
+    rows = [r for r in readings if r["time"] == at_time]
+    by_zone = {}
+    for r in rows:
+        by_zone.setdefault(r["zone"], []).append(r)
+    zone, homes = max(by_zone.items(), key=lambda kv: kv[1][0]["zone_fire_index"])
+    index = homes[0]["zone_fire_index"]
+    if index < crisis.HIGH_RISK:
+        return None
+
+    # Battery runtime: how long each home could run on its own battery at its current use
+    # (stored energy in kWh / power use in kW = hours). Silent batteries: unknown.
+    runtimes = []
+    for r in homes:
+        if r["charge_pct"] is None:
+            runtimes.append({"battery_id": r["battery_id"], "household_type": r["household_type"], "hours": None})
+            continue
+        stored_kwh = r["charge_pct"] / 100 * simulator.BATTERY_CAPACITY_KWH
+        runtimes.append({"battery_id": r["battery_id"], "household_type": r["household_type"],
+                         "hours": stored_kwh / max(r["home_usage_kw"], 0.3)})
+    known = sorted((x for x in runtimes if x["hours"] is not None), key=lambda x: x["hours"])
+    # Most at risk first: medical, then vulnerable, then the shortest runtime
+    order = {"medical": 0, "vulnerable": 1, "regular": 2}
+    runtimes.sort(key=lambda x: (order.get(x["household_type"], 3),
+                                 x["hours"] if x["hours"] is not None else -1))
+
+    # When does the risk drop back below High in this zone? That's when power comes back.
+    times = sorted({r["time"] for r in readings if r["time"] > at_time})
+    ends = next((t for t in times
+                 if next(r for r in readings if r["time"] == t and r["zone"] == zone)["zone_fire_index"]
+                 < crisis.HIGH_RISK), None)
+    buildings = [b for b in simulator.critical_buildings() if b["zone"] == zone]
+    return {
+        "zone": zone, "index": index, "level": crisis.risk_level(index),
+        "homes": len(homes),
+        "medical": sum(r["household_type"] == "medical" for r in homes),
+        "vulnerable": sum(r["household_type"] == "vulnerable" for r in homes),
+        "runtimes": runtimes,
+        "shortest": known[0] if known else None,
+        "median_hours": known[len(known) // 2]["hours"] if known else None,
+        "buildings": buildings,
+        "until": ends,                       # None = risk lasts the rest of the day
+    }
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher summary: three plain-English lines for the top of the dashboard
 # ---------------------------------------------------------------------------
 LOOKAHEAD_HOURS = 4   # how far ahead the grid forecast looks
@@ -485,7 +542,7 @@ def problem_and_action(r):
     return 3, f"{r['battery_id']} low backup", f"check on {who}: its backup is running low"
 
 
-def summary(readings, at_time, results, approved_steps=()):
+def summary(readings, at_time, results, approved_steps=(), shutoff_approved=False):
     """
     Three short lines for the dispatcher:
         status  - how many batteries need attention, and why
@@ -553,6 +610,12 @@ def summary(readings, at_time, results, approved_steps=()):
     else:
         outlook = f"All zones look calm for the next {LOOKAHEAD_HOURS} hours."
 
+    # Wildfire risk (High or Extreme only)
+    fire = shutoff_plan(readings, at_time)
+    if fire:
+        outlook += (f" **Wildfire risk {fire['level']} in {fire['zone']}**: batteries there hold an "
+                    f"80% reserve.")
+
     # --- Action: strained zones first (most strained first), then the urgent batteries ---
     actions = []
     for plan in relief_plans(readings, at_time)[:2]:
@@ -572,6 +635,9 @@ def summary(readings, at_time, results, approved_steps=()):
     if not strained and coming:
         z, t = min(coming.items(), key=lambda kv: kv[1])
         actions.append(f"let batteries in {z} finish charging before {clock(t)} so they're full when the strain hits")
+    if fire and not shutoff_approved:
+        actions.append(f"consider a precautionary shutoff of {fire['zone']} (wildfire risk {fire['level'].lower()}; "
+                       f"see the Response ladder tab)")
 
     singles = [r for r in single if r not in low or len(low) < 3]
     actions += [problem_and_action(r)[2] for r in singles[:2]]
@@ -591,7 +657,7 @@ def summary(readings, at_time, results, approved_steps=()):
     else:
         action = "**Recommended:** nothing right now. Batteries are earning on their normal schedule."
 
-    level = "error" if needs or strained else "warning" if watch or coming else "ok"
+    level = "error" if needs or strained else "warning" if watch or coming or fire else "ok"
     return {"status": status, "outlook": outlook, "action": action, "level": level}
 
 

@@ -17,6 +17,9 @@
 # month picked in the dashboard. If that file is missing or broken, the dashboard falls
 # back to the approximate monthly values in [countries.<id>.typical_weather].
 #
+# Each zone has a wildfire_exposure (0-1, approximate): zones next to brush, forest or
+# greenbelts are more exposed. It scales the region's wildfire risk index per zone.
+#
 # Each country has a STRESS EVENT: what strains its grid in the demo (a heat wave in
 # Texas, a winter cold snap in Germany). It runs from start_hour to end_hour on the demo
 # day; the "Normal day earnings" tab shows a day without it.
@@ -73,6 +76,7 @@ name = "Heat wave"
 start_hour = 14                          # 2 pm
 end_hour = 20                            # 8 pm
 temperature_change_c = 8                 # degrees warmer than a typical day of the month
+humidity_change_pct = -15                # heat waves are dry too (raises wildfire risk)
 extra_home_load_kw = [3.0, 5.0]          # air conditioning, per home (random between these)
 thermostat_nudge_kw = 1.0                # flexible: AC set a degree warmer
 other_customers_factor = 1.5             # everyone else's load goes up this much
@@ -95,24 +99,28 @@ name = "North Windsor Park"
 shape = [[30.3180, -97.7000], [30.3180, -97.6760], [30.3130, -97.6760], [30.3130, -97.7000]]
 capacity_kw = 610   # approx., set so the demo stress event strains this zone at the right time
 other_customers_kw = 250                 # other homes and shops at their evening peak (approx.)
+wildfire_exposure = 0.5                  # 0-1, how exposed to wildfire (approx.): dense housing
 
 [[countries.us_texas.zones]]
 name = "West Windsor Park"
 shape = [[30.3130, -97.7000], [30.3130, -97.6880], [30.3060, -97.6880], [30.3060, -97.7000]]
 capacity_kw = 560
 other_customers_kw = 250
+wildfire_exposure = 0.9                  # 0-1, how exposed to wildfire (approx.): Fort Branch creek greenbelt: brush and trees
 
 [[countries.us_texas.zones]]
 name = "East Windsor Park"
 shape = [[30.3130, -97.6880], [30.3130, -97.6760], [30.3060, -97.6760], [30.3060, -97.6880]]
 capacity_kw = 560
 other_customers_kw = 250
+wildfire_exposure = 0.6                  # 0-1, how exposed to wildfire (approx.): some green space
 
 [[countries.us_texas.zones]]
 name = "South Windsor Park"
 shape = [[30.3060, -97.7000], [30.3060, -97.6760], [30.3000, -97.6760], [30.3000, -97.7000]]
 capacity_kw = 450
 other_customers_kw = 250
+wildfire_exposure = 0.8                  # 0-1, how exposed to wildfire (approx.): next to the park and creek in the south-west
 
 [[countries.us_texas.water]]             # Mueller Lake, just south-west of the region
 name = "Mueller Lake"
@@ -192,6 +200,7 @@ name = "Cold snap"
 start_hour = 14
 end_hour = 20
 temperature_change_c = -14               # degrees colder than a typical day of the month
+humidity_change_pct = 0
 extra_home_load_kw = [2.0, 4.0]          # heat pumps and electric heaters, per home
 thermostat_nudge_kw = 0.6                # flexible: heating set a degree cooler
 other_customers_factor = 1.5
@@ -214,24 +223,28 @@ name = "Trudering Nord"
 shape = [[48.1280, 11.6400], [48.1280, 11.6720], [48.1230, 11.6720], [48.1230, 11.6400]]
 capacity_kw = 290   # approx., set so the demo stress event strains this zone at the right time
 other_customers_kw = 150
+wildfire_exposure = 0.5                  # 0-1, how exposed to wildfire (approx.): dense housing, railway
 
 [[countries.de_munich.zones]]
 name = "Trudering West"
 shape = [[48.1230, 11.6400], [48.1230, 11.6560], [48.1170, 11.6560], [48.1170, 11.6400]]
 capacity_kw = 360
 other_customers_kw = 150
+wildfire_exposure = 0.4                  # 0-1, how exposed to wildfire (approx.): dense housing
 
 [[countries.de_munich.zones]]
 name = "Trudering Ost"
 shape = [[48.1230, 11.6560], [48.1230, 11.6720], [48.1170, 11.6720], [48.1170, 11.6560]]
 capacity_kw = 390
 other_customers_kw = 150
+wildfire_exposure = 0.9                  # 0-1, how exposed to wildfire (approx.): next to the Truderinger forest
 
 [[countries.de_munich.zones]]
 name = "Trudering Süd"
 shape = [[48.1170, 11.6400], [48.1170, 11.6720], [48.1120, 11.6720], [48.1120, 11.6400]]
 capacity_kw = 370
 other_customers_kw = 150
+wildfire_exposure = 0.7                  # 0-1, how exposed to wildfire (approx.): gardens and green space
 
 [[countries.de_munich.water]]             # lake in the Ostpark, just west of the region
 name = "Ostpark lake"

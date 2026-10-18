@@ -77,6 +77,7 @@ Replace the single scripted stress event with crises that depend on the time of 
 - **Forecastable vs. sudden crises**: forecastable ones (heat wave, cold snap) are
   announced hours ahead so batteries can pre-charge; sudden ones (storm damage,
   earthquake, equipment failure) hit with no warning.
+- (Wildfire risk index, reserves and precautionary shutoff: done, see What's built.)
 - **Wildfire risk index**: a 0-100 daily score from heat, dryness and wind. High risk can
   trigger preventive power shutoffs in exposed zones.
 - **Severity scale**: each crisis gets a level (1 minor to 5 extreme) that sets how hard
@@ -113,7 +114,14 @@ Known gaps today (fix as part of the crisis-mode work):
   from the config fill in only types with no real match (hospital, cold storage), tagged
   "simulated"; if the file is missing, all made-up. Every zone gets at least 6 homes,
   none within 60 m of a building. Zone capacities retuned for the new loads.
-- The saved earthquakes aren't used on screen yet.
+- Wildfire risk index (crisis.py): heat x dryness x wind from the saved weather, 0-100,
+  Low / Moderate / High / Extreme; per zone scaled by the config's wildfire_exposure; the
+  demo day's risk = worst fire weather in the next 6 h (a heat wave is hotter and drier).
+  At High/Extreme a zone's batteries keep an 80% reserve (normally 20%), and the
+  dispatcher can approve a precautionary shutoff of the riskiest zone (like California's
+  PSPS), with homes affected, battery runtimes and when the risk eases. Approving marks
+  the zone shut off on the map; the grid effect of the outage isn't simulated yet.
+- The saved earthquakes are used for crisis chances, not shown on screen yet.
 
 ## Tech stack
 - Python + Streamlit (web dashboard), Altair for charts, pydeck for the map

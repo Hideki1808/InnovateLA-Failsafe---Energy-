@@ -84,7 +84,7 @@ st.session_state.setdefault("month", simulator.DAY_START.month)   # the demo dat
 
 def reset_demo():
     """A different country or month starts the demo over: back to noon, nothing approved yet."""
-    for key in ("now", "playing", "pause_note", "seen", "approved", "next_time"):
+    for key in ("now", "playing", "pause_note", "seen", "approved", "shutoffs", "next_time"):
         st.session_state.pop(key, None)
 
 
@@ -161,6 +161,16 @@ with live_tab:
             events.append((f"{r['battery_id']}:{r['battery_status']}", f"{who} needs the dispatcher: {why}."))
         elif pd.notna(r["silent_guess"]):
             events.append((f"{r['battery_id']}:silent", f"{who} went silent. Best guess: {r['silent_guess']}."))
+    # Wildfire: the riskiest zone's precautionary-shutoff plan (None unless High/Extreme),
+    # and which shutoffs the dispatcher has approved: {zone: (from, until)}
+    fire_plan = rules.shutoff_plan(readings, now)
+    st.session_state.setdefault("shutoffs", {})
+    shut_off_now = {z for z, (start, until) in st.session_state.shutoffs.items()
+                    if start <= now and (until is None or now < until)}
+    if fire_plan:
+        events.append((f"fire:{fire_plan['zone']}",
+                       f"Wildfire risk {fire_plan['level']} in {fire_plan['zone']}: batteries there hold "
+                       f"an 80% reserve. A precautionary shutoff is ready in the Response ladder tab."))
     for zone, stress in current.groupby("zone")["zone_stress"].first().items():
         if stress >= rules.STRAINED_GRID:
             events.append((f"strained:{zone}", f"{EVENT['name']}: {zone} is strained ({stress:.0f}% of capacity). "
@@ -240,19 +250,29 @@ with live_tab:
         # --- Map: zones lightly shaded by how strained they are, homes colored by category ---
         ink = style.rgb(style.INK)                 # label color on the light map
 
-        zone_now = current.groupby("zone")[["zone_stress"]].first()["zone_stress"]
+        zone_now = current.groupby("zone")[["zone_stress", "zone_fire_index", "zone_fire_level"]].first()
         zone_rows = []
         for name, z in simulator.ZONES.items():
-            stress = zone_now[name]
+            stress = zone_now.loc[name, "zone_stress"]
+            fire_index, fire_level = zone_now.loc[name, "zone_fire_index"], zone_now.loc[name, "zone_fire_level"]
             state = ("Strained" if stress >= rules.STRAINED_GRID
                      else "Busy" if stress >= rules.BUSY_GRID else "OK")
             fill = style.rgb(style.ZONE_HEX[state], {"Strained": 32, "Busy": 38, "OK": 26}[state])
+            label = f"{name}: {stress:.0f}%"
+            line2 = f"Wildfire risk {fire_level.lower()} ({fire_index}/100)"
+            if fire_level in ("High", "Extreme"):
+                label += f" · fire {fire_level.lower()}"
+                line2 += ": batteries hold an 80% reserve"
+            if name in shut_off_now:                # precautionary shutoff approved: zone is dark
+                fill, label = style.rgb("#3a3a3c", 120), f"{name}: shut off"
+                line2 = "Precautionary shutoff (wildfire): homes run on their batteries"
             corners = [[lon, lat] for lat, lon in z["shape"]]
             zone_rows.append({
-                "polygon": corners, "fill": fill, "label": f"{name}: {stress:.0f}%",
+                "polygon": corners, "fill": fill, "label": label,
                 # Label in the zone's top-left corner, out of the way of the dots
                 "lat": max(p[1] for p in corners), "lon": min(p[0] for p in corners),
-                "title": name, "line1": f"Zone {state.lower()}: using {stress:.0f}% of its capacity", "line2": "",
+                "title": name, "line1": f"Zone {state.lower()}: using {stress:.0f}% of its capacity",
+                "line2": line2,
             })
 
         FADE_MS = 600   # how long a dot or zone takes to fade to its new color
@@ -345,7 +365,8 @@ with live_tab:
         # --- Dispatcher summary: three plain-English lines, written by the rules ---
         st.session_state.setdefault("approved", set())
         approved_now = {(zone, n) for t, zone, n in st.session_state.approved if t == now}
-        brief = rules.summary(readings, now, results.to_dict("records"), approved_now)
+        brief = rules.summary(readings, now, results.to_dict("records"), approved_now,
+                              shutoff_approved=bool(fire_plan and fire_plan["zone"] in shut_off_now))
         st.html(style.label("What's happening") + style.pill(brief["level"]))
         st.markdown(f"{brief['status']}  \n{brief['outlook']}  \n{brief['action']}")
 
@@ -381,6 +402,53 @@ with live_tab:
 
                 def reset_approvals():
                     st.session_state.approved = set()
+                    st.session_state.shutoffs = {}
+
+
+                def approve_shutoff(zone, start, until):
+                    st.session_state.shutoffs[zone] = (start, until)
+
+
+                # --- Wildfire precaution: a planned shutoff of the riskiest zone ---
+                if fire_plan or shut_off_now:
+                    with st.container(border=True):
+                        if fire_plan:
+                            st.html(style.label("Wildfire precaution") + style.fire_pill(fire_plan["level"]))
+                        else:
+                            st.html(style.label("Wildfire precaution"))
+                        for zone in sorted(shut_off_now):
+                            until = st.session_state.shutoffs[zone][1]
+                            st.success(f"**Shutoff approved: {zone} is off the grid**"
+                                       + (f" until {rules.clock(until)}" if until else " for the rest of the day")
+                                       + ". Homes run on their batteries (simulated).")
+                        if fire_plan and fire_plan["zone"] not in shut_off_now:
+                            p = fire_plan
+                            buildings = [b["name"] + (" (no backup)" if not b["backup_hours"] else
+                                                      f" ({b['backup'].lower()}, {b['backup_hours']} h)")
+                                         for b in p["buildings"]]
+                            until = rules.clock(p["until"]) if p["until"] else "the end of the day"
+                            st.markdown(
+                                f"**{p['zone']}**: wildfire risk **{p['level'].lower()}** ({p['index']}/100). "
+                                f"Its batteries already hold an 80% reserve. A planned shutoff would cut grid "
+                                f"power to **{p['homes']} homes**"
+                                + (f" and **{', '.join(buildings)}**" if buildings else "")
+                                + f" until about **{until}**, so power lines can't spark a fire.")
+                            if p["shortest"]:
+                                st.caption(f"Battery runtime if shut off now: shortest {p['shortest']['hours']:.1f} h "
+                                           f"({p['shortest']['battery_id']}), typical {p['median_hours']:.1f} h. "
+                                           f"{p['medical']} medical and {p['vulnerable']} vulnerable homes.")
+                            with st.expander(f"Homes and battery runtimes ({p['homes']})"):
+                                st.write(", ".join(
+                                    f"{x['battery_id']} ({x['household_type']}): "
+                                    + (f"{x['hours']:.1f} h" if x["hours"] is not None else "unknown (silent)")
+                                    for x in p["runtimes"]))
+                            what = f"{p['homes']} homes" + (" and " + ", ".join(b["name"] for b in p["buildings"])
+                                                            if p["buildings"] else "")
+                            confirmed = st.checkbox(f"I understand {what} will lose grid power.",
+                                                    key=f"psps_confirm_{now}_{p['zone']}")
+                            st.button("Approve shutoff", type="primary", disabled=not confirmed,
+                                      key=f"psps_{now}_{p['zone']}", on_click=approve_shutoff,
+                                      args=(p["zone"], now, p["until"]))
 
 
                 # Every zone at a glance: a colored square, the name and how full it is
@@ -457,7 +525,7 @@ with live_tab:
                             st.error(f"Even with every step, {zone} is still about {plan['shortfall_kw']:.0f} kW short. "
                                      f"Medical homes are never cut: escalate to the utility.")
 
-                if plans:
+                if plans or shut_off_now:
                     st.button("Reset approvals", on_click=reset_approvals)
 
 

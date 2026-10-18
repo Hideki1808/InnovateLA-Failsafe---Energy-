@@ -104,7 +104,8 @@ def use_country(country_id):
     COUNTRY_ID, COUNTRY = country_id, c
     ZONES = {z["name"]: {"shape": [tuple(p) for p in z["shape"]],
                          "capacity_kw": z["capacity_kw"],
-                         "other_customers_kw": z["other_customers_kw"]}
+                         "other_customers_kw": z["other_customers_kw"],
+                         "wildfire_exposure": z.get("wildfire_exposure", 0.5)}
              for z in c["zones"]}
     WATER = {w["name"]: [tuple(p) for p in w["shape"]] for w in c.get("water", [])}
     HOUSEHOLD_TYPES = {t: (desc, priority, c["household_mix"][t])
@@ -414,7 +415,7 @@ def flexible_usage_kw(home, hour, event_part=True):
     return kw
 
 
-def battery_plan_kw(hour, charge_pct):
+def battery_plan_kw(hour, charge_pct, fire_reserve=None):
     """
     What a healthy battery decides to do.
     Positive = discharging (helping the home / grid). Negative = charging.
@@ -423,14 +424,47 @@ def battery_plan_kw(hour, charge_pct):
     Note: batteries follow their own schedule. They don't know when the grid is in
     trouble, so they keep charging through 3 pm even if the stress event has started.
     Pausing that is one of the dispatcher's relief steps.
+
+    fire_reserve: when wildfire risk in the battery's zone is High or Extreme, it keeps
+    this much charge (e.g. 80%) in case the zone's power is shut off: it tops up to it,
+    and won't discharge below it. Less help for the grid, but a backup for the home.
     """
+    if fire_reserve and charge_pct < fire_reserve - 1:
+        return -0.25 * BATTERY_MAX_KW         # wildfire risk: fill up to the safety reserve
     if 10 <= hour < 15:
         return -0.25 * BATTERY_MAX_KW if charge_pct < 95 else 0.0   # cheap solar hours: fill up slowly, then hold
-    if grid_stress(hour) >= 80 and charge_pct > 15:
+    floor = fire_reserve or 0
+    if grid_stress(hour) >= 80 and charge_pct > max(15, floor):
         return 0.5 * BATTERY_MAX_KW           # grid is strained: push hard
-    if 17 <= hour < 21 and charge_pct > 20:
+    if 17 <= hour < 21 and charge_pct > max(20, floor):
         return 0.3 * BATTERY_MAX_KW           # evening peak: use stored power
     return 0.0
+
+
+FIRE_LOOKAHEAD_H = 6   # wildfire risk "now" = the worst fire weather expected in the next 6 hours
+
+
+def fire_index_now(hour):
+    """
+    The region's wildfire risk index (0-100) at this hour of the demo day: the worst fire
+    weather expected over the next FIRE_LOOKAHEAD_H hours, like a fire-weather watch, so
+    batteries get time to fill their reserve before the danger peaks. Uses the month's
+    typical day (weather.py) with the stress event on top (a hotter, drier heat wave
+    raises it).
+    """
+    import crisis
+    import weather
+    worst = 0
+    for k in range(FIRE_LOOKAHEAD_H * 4 + 1):         # every 15 minutes ahead
+        h = hour + k * 0.25
+        if h >= 24:
+            break
+        w = weather.at(_weather_day, h)
+        humidity = w["humidity_pct"]
+        if is_stress_event(h):                       # e.g. a heat wave is drier, too
+            humidity += COUNTRY["stress_event"].get("humidity_change_pct", 0)
+        worst = max(worst, crisis.index_from_weather(outdoor_temp_c(h), humidity, w["wind_kmh"]))
+    return worst
 
 
 # ---------------------------------------------------------------------------
@@ -456,6 +490,7 @@ def simulate(seed=SEED, ordinary_day=False, month=None):
 
 
 def _run_day(seed, ordinary_day):
+    import crisis                             # (here, not at the top: crisis.py imports this file)
     rng = random.Random(seed)
     buildings = critical_buildings()
     # Which batteries get planted problems today (none on an ordinary day)
@@ -482,13 +517,19 @@ def _run_day(seed, ordinary_day):
         hour = now.hour + now.minute / 60
         price = electricity_price(hour)
         stress = grid_stress(hour)
+        # Wildfire risk right now, for the region and each zone (crisis.py has the formulas)
+        fire_region = fire_index_now(hour)
+        fire_zone = {z: crisis.zone_fire_index(fire_region, info["wildfire_exposure"])
+                     for z, info in ZONES.items()}
 
         for home in fleet:
             bid = home["battery_id"]
             usage = home_usage_kw(home, hour, rng)
 
             # --- what the battery actually does (the truth) ---
-            battery_kw = battery_plan_kw(hour, charge[bid])
+            reserve = (crisis.FIRE_RESERVE_PCT if fire_zone[home["zone"]] >= crisis.HIGH_RISK
+                       else None)                  # High/Extreme risk in this zone: keep 80%
+            battery_kw = battery_plan_kw(hour, charge[bid], fire_reserve=reserve)
 
             if bid == broken_id and hour >= BROKEN_AT_HOUR:
                 battery_kw = 0.0              # dead: not helping at all
@@ -561,6 +602,10 @@ def _run_day(seed, ordinary_day):
                 # The world
                 "price_per_kwh": price,
                 "outdoor_temp_c": round(outdoor_temp_c(hour), 1),
+                "fire_index": fire_region,                            # region, 0-100
+                "zone_fire_index": fire_zone[home["zone"]],           # this home's zone
+                "zone_fire_level": crisis.risk_level(fire_zone[home["zone"]]),
+                "battery_reserve_pct": reserve or crisis.NORMAL_RESERVE_PCT,
                 "grid_stress": stress,
                 "stress_event": is_stress_event(hour),
                 # Money: discharging when it's pricey saves/earns; charging costs
