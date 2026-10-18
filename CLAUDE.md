@@ -117,9 +117,17 @@ Known gaps today (fix as part of the crisis-mode work):
   dispatcher can approve a precautionary shutoff of the riskiest zone (like California's
   PSPS), with homes affected, battery runtimes and when the risk eases. Approving marks
   the zone shut off on the map; the grid effect of the outage isn't simulated yet.
-- Crisis panel (top of Live dispatch): Off / Random (by the month's odds) / Pick (type +
-  severity), a visible Seed (same seed = exactly the same crisis and blackouts), Reroll
-  (new seed) and Full blackout. Default Off, so the normal demo is unchanged.
+- Crisis control panel (top of Live dispatch): Month, Crisis (Random by the month's odds,
+  or a type + Severity), Seed + Reroll, Start crisis / End crisis (usable anytime, also
+  while playing: it starts at the time on screen), Force full blackout toggle (while a
+  crisis runs). Before Start the day is the normal demo (unchanged, checked). Forecastable
+  crises are announced at Start and hit 2 h later (crisis.DEMO_WARNING_HOURS; real ones
+  6-48 h), batteries pre-charging meanwhile; sudden ones hit at once. End crisis stops it
+  and restores power. Reset (and a country/month change) clears the crisis. One crisis
+  per day: starting a new one replaces the old.
+  Status bar under the panel (always on the page): crisis banner (type, severity dots,
+  Forecast / No warning, hits in / started ago / over, zones dark, full blackout, seed)
+  and the wildfire risk level, always.
   crisis.blackouts(): chance of any outage by severity (1: 5%, 2: 20%, 3: 45%, 4-5:
   always), share of zones dark (about 1/2 at 4, 3/4 at 5), zones drawn weighted by type
   (wildfire: region edges x wildfire_exposure; windstorm: config overhead_lines;

@@ -38,14 +38,15 @@ SEVERITY = {rules.NEEDS_DISPATCHER: 0, rules.WATCH: 1, rules.CAN_WAIT: 2, rules.
 # every click)
 @st.cache_data
 def load_readings(country_id, month, crisis_settings=None):
-    """The simulated day. crisis_settings (crisis mode): the Crisis panel's settings; the
-    crisis then replaces the scripted event, batteries pre-charge during its warning, and
+    """The simulated day. crisis_settings: the crisis control panel's settings (see
+    get_crisis), or None for the normal demo day. From the moment the crisis is started
+    it replaces the scripted event; batteries pre-charge during a forecast's warning, and
     dark zones get no grid power (their homes run on their batteries)."""
     simulator.use_country(country_id)
     if crisis_settings is None:
         return simulator.simulate(month=month)
     c, outages = get_crisis(country_id, month, *crisis_settings)
-    return simulator.simulate(month=month, crisis=c, outages=outages)
+    return simulator.simulate(month=month, crisis=c, outages=outages, crisis_from=c["triggered_at"])
 
 
 @st.cache_data
@@ -59,15 +60,39 @@ def run_rules(country_id, month, crisis_settings, at_time):
 st.html(style.CSS)
 
 @st.cache_data
-def get_crisis(country_id, month, mode, kind, severity, seed, full_blackout):
-    """The crisis for the Crisis panel's settings and its outages (which zones go dark,
-    when). Same settings + same seed = exactly the same crisis, so it can be replayed."""
+def get_crisis(country_id, month, choice, severity, seed, started, ended, full_on, full_off):
+    """
+    The crisis and its outages (which zones go dark, when) for the crisis control panel.
+      choice: "random" (picked by this month's odds) or a crisis type; severity for a chosen type
+      started / ended: hours of the day when "Start crisis" / "End crisis" were pressed
+      full_on / full_off: when "Force full blackout" was switched on / off (None = not used)
+    Same settings + same seed = exactly the same crisis, so it can be replayed.
+    """
     simulator.use_country(country_id)
-    if mode == "Random":                      # random for the month, by its odds
+    if choice == "random":
         c = crisis.pick_random(country_id, month, seed=seed)
     else:
-        c = crisis.make_crisis(country_id, month, kind, severity, seed=seed)
-    return c, crisis.blackouts(country_id, c, seed=seed, force_full=full_blackout)
+        c = crisis.make_crisis(country_id, month, choice, severity, seed=seed)
+    c = crisis.start_at(c, started)
+    outages = crisis.blackouts(country_id, c, seed=seed)
+    if full_on is not None:
+        outages += crisis.full_blackout(country_id, c, full_on, full_off)
+    outages = crisis.merge_outages(outages)
+    if ended is not None:
+        c, outages = crisis.end_at(c, outages, ended)
+    return c, outages
+
+
+def hour_of(t):
+    """'2026-10-17 15:45' -> 15.75"""
+    return int(t[11:13]) + int(t[14:16]) / 60
+
+
+def duration(hours):
+    """1.25 -> '1 h 15 min', 0.5 -> '30 min'"""
+    minutes = int(round(hours * 60))
+    h, m = divmod(minutes, 60)
+    return f"{h} h {m} min" if h and m else f"{h} h" if h else f"{m} min"
 
 
 PULSE_SECONDS = 1.0   # one breath of the ring around "Needs dispatcher" dots
@@ -104,16 +129,14 @@ st.session_state.setdefault("month", simulator.DAY_START.month)   # the demo dat
 
 def reset_demo():
     """A different country or month starts the demo over: back to noon, nothing approved yet."""
-    for key in ("now", "playing", "pause_note", "seen", "approved", "shutoffs", "dark_approved", "next_time"):
+    for key in ("now", "playing", "pause_note", "seen", "approved", "shutoffs", "dark_approved", "next_time", "shown_time",
+                "crisis_started", "crisis_ended", "full_on", "full_off", "full_blackout"):
         st.session_state.pop(key, None)
 
 
 title_col, country_col = st.columns([2.4, 1.6], vertical_alignment="bottom")
-pick_country, pick_month = country_col.columns([1.6, 1])
-pick_country.selectbox("Country", list(simulator.COUNTRIES), key="country", on_change=reset_demo,
+country_col.selectbox("Country", list(simulator.COUNTRIES), key="country", on_change=reset_demo,
                        format_func=lambda c: simulator.COUNTRIES[c]["name"], label_visibility="collapsed")
-pick_month.selectbox("Month", range(1, 13), key="month", on_change=reset_demo,
-                     format_func=lambda m: weather.MONTHS[m - 1], label_visibility="collapsed")
 country_id = st.session_state.country
 month = st.session_state.month
 simulator.use_country(country_id)          # rules.py and simulator.py now use this country
@@ -133,13 +156,50 @@ with live_tab:
     DEMO_START = "2026-10-17 12:00"        # calm before the stress event
     SPEEDS = {"Slow": 2.0, "Normal": 1.0, "Fast": 0.4}   # seconds per 15-minute step
 
-    # --- Crisis mode: a random or hand-picked crisis, with a seed so it can be replayed ---
-    CRISIS_MODES = ["Off", "Random", "Pick"]
-    st.session_state.setdefault("crisis_mode", "Off")
-    st.session_state.setdefault("crisis_type", "windstorm")
+    # --- Crisis control: start a crisis at any moment (also while playing), end it,
+    # force a full blackout. The seed makes it replayable; Reroll gives a new outcome. ---
+    st.session_state.setdefault("crisis_choice", "random")
     st.session_state.setdefault("crisis_severity", 4)
     st.session_state.setdefault("crisis_seed", 42)
-    st.session_state.setdefault("full_blackout", False)
+    st.session_state.setdefault("crisis_started", None)    # time "Start crisis" was pressed
+    st.session_state.setdefault("crisis_ended", None)      # time "End crisis" was pressed
+    st.session_state.setdefault("full_on", None)           # time the full blackout was switched on
+    st.session_state.setdefault("full_off", None)          # ... and off
+    st.session_state.setdefault("dark_approved", set())   # approved dark-zone steps: (zone, start, step)
+
+
+    def time_on_screen():
+        """The time the dashboard is showing. (While playing, the slider's own value can lag
+        behind, so the page remembers what it last drew, or what it's about to draw next.)"""
+        return (st.session_state.get("next_time") or st.session_state.get("shown_time")
+                or st.session_state.now)
+
+
+    def clear_crisis():
+        for key in ("crisis_started", "crisis_ended", "full_on", "full_off"):
+            st.session_state[key] = None
+        st.session_state.full_blackout = False
+        st.session_state.dark_approved = set()
+
+
+    def start_crisis():
+        """Start the chosen crisis now (the slider's time). Play keeps going."""
+        clear_crisis()
+        st.session_state.crisis_started = time_on_screen()
+        st.session_state.pause_note = None
+
+
+    def end_crisis():
+        """End it now: the crisis stops and power comes back everywhere."""
+        st.session_state.crisis_ended = time_on_screen()
+        st.session_state.full_blackout = False
+
+
+    def toggle_full_blackout():
+        if st.session_state.full_blackout:
+            st.session_state.full_on, st.session_state.full_off = hour_of(time_on_screen()), None
+        else:
+            st.session_state.full_off = hour_of(time_on_screen())
 
 
     def reroll():
@@ -149,35 +209,42 @@ with live_tab:
         st.session_state.dark_approved = set()
 
 
+    crisis_running = st.session_state.crisis_started is not None and st.session_state.crisis_ended is None
     with st.container(key="panel_crisis"):
-        k1, k2, k3, k4, k5, k6 = st.columns([2.2, 1.8, 1.6, 1.3, 1.0, 1.9], vertical_alignment="bottom")
-        k1.segmented_control("Crisis mode", CRISIS_MODES, key="crisis_mode", required=True,
-                             help="Random: a crisis picked by this month's odds. Pick: choose the type and severity.")
-        picking = st.session_state.crisis_mode == "Pick"
-        crisis_on = st.session_state.crisis_mode != "Off"
-        k2.selectbox("Type", list(crisis.TYPES), key="crisis_type", disabled=not picking,
-                     format_func=lambda k: crisis.TYPES[k]["name"])
-        k3.selectbox("Severity", range(1, 6), key="crisis_severity", disabled=not picking,
+        k1, k2, k3, k4, k5, k6, k7 = st.columns([1.3, 1.7, 1.5, 1.0, 1.0, 1.4, 2.7], vertical_alignment="bottom")
+        k1.selectbox("Month", range(1, 13), key="month", on_change=reset_demo,
+                     format_func=lambda m: weather.MONTHS[m - 1],
+                     help="Weather, crisis odds and the fleet follow the month")
+        k2.selectbox("Crisis", ["random"] + list(crisis.TYPES), key="crisis_choice", disabled=crisis_running,
+                     format_func=lambda k: "Random" if k == "random" else crisis.TYPES[k]["name"],
+                     help="Random: picked by this month's odds (it picks the severity too)")
+        k3.selectbox("Severity", range(1, 6), key="crisis_severity",
+                     disabled=crisis_running or st.session_state.crisis_choice == "random",
                      format_func=lambda s: f"{s} {crisis.SEVERITY_NAMES[s].lower()}")
         k4.number_input("Seed", min_value=0, max_value=999_999, step=1, key="crisis_seed",
-                        disabled=not crisis_on, help="The same seed replays exactly the same crisis")
-        k5.button("Reroll", on_click=reroll, disabled=not crisis_on, width="stretch",
-                  help="Pick a new random seed for a new outcome")
-        k6.checkbox("Full blackout", key="full_blackout", disabled=not crisis_on,
-                    help="Force a full blackout: cut grid power to every zone")
+                        help="The same seed replays exactly the same crisis")
+        k5.button("Reroll", on_click=reroll, width="stretch", help="A new random seed: a new outcome")
+        if crisis_running:
+            k6.button("End crisis", on_click=end_crisis, width="stretch",
+                      help="The crisis stops now and power comes back everywhere")
+        else:
+            k6.button("Start crisis", on_click=start_crisis, type="primary", width="stretch",
+                      help="Starts now, also while playing. Forecastable crises are announced first.")
+        k7.toggle("Force full blackout", key="full_blackout", on_change=toggle_full_blackout,
+                  disabled=not crisis_running, help="Cut grid power to every zone (start a crisis first)")
+    # Crisis banner + wildfire risk: a slot that's always on the page, so nothing below moves
+    status_slot = st.empty()
 
-    if crisis_on:
-        crisis_settings = (st.session_state.crisis_mode, st.session_state.crisis_type,
-                           st.session_state.crisis_severity, st.session_state.crisis_seed,
-                           st.session_state.full_blackout)
+    if st.session_state.crisis_started is not None:
+        ended = st.session_state.crisis_ended
+        crisis_settings = (st.session_state.crisis_choice, st.session_state.crisis_severity,
+                           st.session_state.crisis_seed, hour_of(st.session_state.crisis_started),
+                           hour_of(ended) if ended else None,
+                           st.session_state.full_on, st.session_state.full_off)
         the_crisis, outages = get_crisis(country_id, month, *crisis_settings)
-        # The crisis replaces the scripted heat wave / cold snap
-        EVENT = {"name": the_crisis["name"], "start_hour": the_crisis["start_hour"],
-                 "end_hour": min(int(the_crisis["end_hour"]), 23)}
     else:
         crisis_settings, the_crisis, outages = None, None, []
-        EVENT = COUNTRY["stress_event"]      # heat wave, cold snap... (from the config file)
-    st.session_state.setdefault("dark_approved", set())   # approved dark-zone steps: (zone, start, step)
+    EVENT = COUNTRY["stress_event"]          # the scripted heat wave / cold snap (from the config file)
 
     # The day's readings (with the crisis, if any)
     readings = load_readings(country_id, month, crisis_settings)
@@ -205,6 +272,7 @@ with live_tab:
         st.session_state.pause_note = None
         st.session_state.seen = set()
         st.session_state.now = t
+        clear_crisis()                       # back to the normal day
 
 
     def step_forward():
@@ -213,6 +281,7 @@ with live_tab:
 
 
     now = st.session_state.now
+    st.session_state.shown_time = now           # what the page is showing (see time_on_screen)
     current = data[data["time"] == now]
     results = run_rules(country_id, month, crisis_settings, now)
 
@@ -231,8 +300,11 @@ with live_tab:
     hour_now = int(now[11:13]) + int(now[14:16]) / 60
     outages_now = [o for o in outages if o["start"] <= hour_now < o["end"]]
     crisis_line = crisis.forecast_label(the_crisis, hour_now) if the_crisis else None
-    if the_crisis and the_crisis["start_hour"] <= hour_now < the_crisis["end_hour"]:
-        events.append(("crisis:start", f"{crisis_line}. {the_crisis['what']}"))
+    if the_crisis and the_crisis["triggered_at"] <= hour_now and crisis_line:
+        if hour_now < the_crisis["start_hour"]:
+            events.append(("crisis:forecast", f"{crisis_line}. Batteries are pre-charging."))
+        elif hour_now < the_crisis["end_hour"]:
+            events.append(("crisis:start", f"{crisis_line}. {the_crisis['what']}"))
     for o in outages_now:
         events.append((f"dark:{o['zone']}", f"{o['zone']} lost grid power ({o['cause']}). "
                                             f"Its homes run on their batteries. See the Response ladder tab."))
@@ -248,7 +320,7 @@ with live_tab:
                        f"an 80% reserve. A precautionary shutoff is ready in the Response ladder tab."))
     for zone, stress in current.groupby("zone")["zone_stress"].first().items():
         if stress >= rules.STRAINED_GRID:
-            events.append((f"strained:{zone}", f"{EVENT['name']}: {zone} is strained ({stress:.0f}% of capacity). "
+            events.append((f"strained:{zone}", f"{current.iloc[0]['event_name']}: {zone} is strained ({stress:.0f}% of capacity). "
                                                f"See its plan in the Response ladder tab."))
     new_events = [(k, msg) for k, msg in events if k not in st.session_state.seen]
     st.session_state.seen |= {k for k, _ in events}
@@ -294,7 +366,7 @@ with live_tab:
     event_on = bool(current.iloc[0]["stress_event"])      # is the heat wave / cold snap on?
     st.html(style.stats([
         (rules.clock(now), f"{rules.temp(current.iloc[0]['outdoor_temp_c'])} outside"
-                           + (f" · {rules.event_label(readings)}" if event_on else ""), False),
+                           + (f" · {current.iloc[0]['event_name']}" if event_on else ""), False),
         (needs, "need the dispatcher", needs > 0),
         (int(counts.get(rules.WATCH, 0)), "to watch", False),
         (int(counts.get(rules.CAN_WAIT, 0)), "can wait", False),
@@ -317,20 +389,35 @@ with live_tab:
          "Map data © OpenStreetMap contributors" if real_buildings else None),
     ]))
 
-    if the_crisis:
+    # --- Status bar: the crisis banner (during a crisis) and the wildfire risk (always) ---
+    fire_zones = current.groupby("zone")["zone_fire_index"].first()
+    fire_zone = fire_zones.idxmax()
+    fire_index = int(fire_zones[fire_zone])
+    fire_html = (style.fire_pill(crisis.risk_level(fire_index))
+                 + f'<span class="muted">{fire_index}/100, highest in {fire_zone}</span>')
+    crisis_html = ""
+    if the_crisis and hour_now >= the_crisis["triggered_at"]:
         c = the_crisis
-        when = (f"starts {rules._hour_clock(c['start_hour'])}"
-                + (f", forecast {c['warning_hours']}h ahead" if c["forecastable"] else ", no warning"))
-        dark_text = ("; ".join(f"{o['zone']} {rules._hour_clock(o['start'])} to "
-                               + (rules._hour_clock(o["end"]) if o["end"] < 24 else "midnight")
-                               for o in outages) or "no outages this time")
-        headline = crisis_line or f'{c["name"]} coming (no warning yet)'
-        if "severity" not in headline:
-            headline += f', severity {c["severity"]} ({c["severity_name"].lower()})'
-        st.html(f'<div class="crisis-line"><b>{headline}</b> · {when}'
-                f' · chance this month {c["chance_this_month"]:.0%}'
-                f' · Seed {st.session_state.crisis_seed}'
-                f'<br/>Blackouts: {dark_text}</div>')
+        dark = sorted({o["zone"] for o in outages_now})
+        parts = [f'<b>{c["name"]}</b>',
+                 style.severity_dots(c["severity"]) + f' {c["severity_name"]}',
+                 f'Forecast, {c["warning_hours"]} h ahead' if c["forecastable"] else "No warning"]
+        if hour_now >= c.get("ended_at", 99) or hour_now >= c["end_hour"]:
+            parts.append(f'Over since {rules._hour_clock(min(c.get("ended_at", 99), c["end_hour"]))}')
+        elif hour_now < c["start_hour"]:
+            parts.append(f'Hits in {duration(c["start_hour"] - hour_now)} '
+                         f'({rules._hour_clock(c["start_hour"])}), batteries pre-charging')
+        else:
+            since = hour_now - c["start_hour"]
+            parts.append((f'Started {duration(since)} ago' if since > 0 else "Started just now")
+                         + f' ({rules._hour_clock(c["start_hour"])})')
+        parts.append(f'Zones dark: {", ".join(dark)} ({len(dark)} of {len(simulator.ZONES)})'
+                     if dark else "No zones dark")
+        if any("full blackout" in o["cause"] for o in outages_now):
+            parts.append("<b>Full blackout</b>")
+        parts.append(f'<span class="muted">Seed {st.session_state.crisis_seed}</span>')
+        crisis_html = " · ".join(parts)
+    status_slot.html(style.status_bar(crisis_html, fire_html))
 
     # --- Main area: big map on the left, side panel with what to do on the right ---
     left, right = st.columns([1.9, 1.1], gap="medium")

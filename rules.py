@@ -673,10 +673,11 @@ def temp(celsius):
     return f"{celsius:.0f}°C"
 
 
-def event_label(readings=None):
-    """The day's stress event, e.g. 'Heat wave' or 'Cold snap' (the crisis in crisis mode)."""
+def event_label(readings=None, at_time=None):
+    """The event at this time, e.g. 'Heat wave' or 'Cold snap' (the crisis, once started)."""
     if readings:
-        return readings[0].get("event_name", simulator.COUNTRY["stress_event"]["name"])
+        row = next((r for r in readings if r["time"] == at_time), readings[0])
+        return row.get("event_name", simulator.COUNTRY["stress_event"]["name"])
     return simulator.COUNTRY["stress_event"]["name"]
 
 
@@ -766,7 +767,7 @@ def summary(readings, at_time, results, approved_steps=(), shutoff_approved=Fals
 
     if strained:
         listed = ", ".join(f"{z} ({stress_at[z][at_time]:.0f}% of capacity)" for z in strained)
-        outlook = f"**{event_label(readings)}: {plural(len(strained), 'zone')} strained now:** {listed}."
+        outlook = f"**{event_label(readings, at_time)}: {plural(len(strained), 'zone')} strained now:** {listed}."
         eases = next((t for t in times[i + 1:]
                       if all(stress_at[z][t] < STRAINED_GRID for z in stress_at if z not in dark)), None)
         if coming:
@@ -776,7 +777,7 @@ def summary(readings, at_time, results, approved_steps=(), shutoff_approved=Fals
     elif coming:
         z, t = min(coming.items(), key=lambda kv: kv[1])
         peak = max(stress_at[z][t2] for t2 in ahead)
-        outlook = (f"**{event_label(readings)} expected: {z} strained from {clock(t)}** "
+        outlook = (f"**{event_label(readings, at_time)} expected: {z} strained from {clock(t)}** "
                    f"(up to {peak:.0f}% of capacity).")
         if len(coming) > 1:
             outlook += f" {len(coming) - 1} more zone{'s' if len(coming) > 2 else ''} later."
@@ -792,7 +793,7 @@ def summary(readings, at_time, results, approved_steps=(), shutoff_approved=Fals
     # Crisis forecast: batteries are filling up before it hits
     now_row = next(r for r in readings if r["time"] == at_time)
     if now_row.get("crisis_reserve_pct") == simulator.PRECHARGE_PCT:
-        outlook += (f" **{event_label(readings)} forecast:** batteries are pre-charging to "
+        outlook += (f" **{event_label(readings, at_time)} forecast:** batteries are pre-charging to "
                     f"{simulator.PRECHARGE_PCT}% so homes have backup if power goes out.")
 
     # Blackout (crisis mode) goes first: it's the biggest news

@@ -91,9 +91,13 @@ CSS = f"""
           margin-right: .45rem; }}
   .credit {{ color: {MUTED}; margin-right: 1.3rem; }}
 
-  /* Crisis mode: one line on what's happening, with a coral edge */
-  .crisis-line {{ margin: .2rem 0 .5rem; padding: .55rem 1rem; background: #fff; border-radius: 14px;
-                  border-left: 5px solid {CORAL}; font-size: .95rem; line-height: 1.6; }}
+  /* Status bar under the crisis controls: crisis banner (left), wildfire risk (right) */
+  .status-bar {{ display: flex; justify-content: space-between; align-items: center; gap: 1rem;
+                 flex-wrap: wrap; margin: .1rem 0 .5rem; padding: .5rem 1rem; background: #fff;
+                 border-radius: 14px; font-size: .95rem; line-height: 1.6; }}
+  .status-bar.crisis {{ border-left: 5px solid {CORAL}; }}
+  .status-bar .muted {{ color: {MUTED}; margin-left: .45rem; }}
+  .sev {{ color: {CORAL}; letter-spacing: .08em; }}
 
   /* Legend under the map */
   .legend {{ font-size: .95rem; color: {INK}; line-height: 2.1; }}
@@ -161,6 +165,19 @@ def fire_pill(level):
     """A small pill like "WILDFIRE RISK HIGH", colored by level."""
     bg, fg = FIRE_PILL[level]
     return f'<span class="pill" style="background:{bg};color:{fg}">Wildfire risk {escape(level)}</span>'
+
+
+def severity_dots(severity):
+    """3 -> '●●●○○' in coral (filled dots = severity out of 5)."""
+    return f'<span class="sev">{"●" * severity}{"○" * (5 - severity)}</span>'
+
+
+def status_bar(crisis_html, fire_html):
+    """The bar under the crisis controls: the crisis banner on the left (empty when there's
+    no crisis) and the wildfire risk on the right (always)."""
+    left = crisis_html or f'<span class="muted" style="margin:0">No crisis. Start one above.</span>'
+    return (f'<div class="status-bar{" crisis" if crisis_html else ""}"><div>{left}</div>'
+            f'<div>{fire_html}</div></div>')
 
 
 def alert_list(rows):

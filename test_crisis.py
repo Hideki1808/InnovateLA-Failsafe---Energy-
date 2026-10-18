@@ -213,20 +213,23 @@ def check_dashboard():
     from streamlit.testing.v1 import AppTest
     print("\nDashboard on fallback values:")
     for country in simulator.COUNTRIES:
-        for mode, extra in [("Off", {}), ("Random", {}),
-                            ("Pick", {"crisis_type": "windstorm", "crisis_severity": 5}),
-                            ("Pick", {"crisis_type": "cold_snap", "crisis_severity": 4, "full_blackout": True})]:
+        for choice, full in [(None, False), ("random", False), ("windstorm", False), ("cold_snap", True)]:
             at = AppTest.from_file(str(HERE / "app.py"), default_timeout=180)
             at.session_state.country = country
-            at.session_state.crisis_mode = mode
-            for k, v in extra.items():
-                at.session_state[k] = v
-            at.session_state.now = "2026-10-17 18:00"
+            at.session_state.now = "2026-10-17 16:00"
             at.run()
+            if choice:                                   # start a crisis at 16:00, 2 hours on
+                at.session_state.crisis_choice = choice
+                at.session_state.crisis_severity = 4
+                next(b for b in at.button if b.label == "Start crisis").click().run()
+                if full:
+                    at.toggle(key="full_blackout").set_value(True).run()
+                for _ in range(8):
+                    next(b for b in at.button if b.label == "Step").click().run()
             html = " ".join(getattr(h, "body", "") or "" for h in at.get("html"))
             labels_ok = "Weather: simulated" in html and "Buildings: simulated" in html
             check(not at.exception and labels_ok,
-                  f"{country} {mode} {extra.get('crisis_type', '')}: runs"
+                  f"{country} {choice or 'no crisis'}{' + full blackout' if full else ''}: runs"
                   + ("" if labels_ok else " (but the 'simulated' labels are missing)")
                   + (f" ERROR {at.exception}" if at.exception else ""))
 

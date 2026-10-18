@@ -360,6 +360,8 @@ def forecast_label(c, hour):
     The demo day starts at midnight, so a warning longer than the start hour was already
     out when the day began.
     """
+    if hour >= c.get("ended_at", 99):
+        return f"{c['name']} over"
     if hour < c["start_hour"]:
         hours_left = math.ceil(c["start_hour"] - hour)
         if c["forecastable"] and hours_left <= c["warning_hours"]:
@@ -467,6 +469,66 @@ def blackouts(country_id, c, seed, force_full=False):
         cause = "full blackout" if force_full else c["name"].lower()
         outages.append({"zone": zone, "start": start, "end": end, "cause": cause})
     return sorted(outages, key=lambda o: o["start"])
+
+
+# ---------------------------------------------------------------------------
+# Starting and ending a crisis from the dashboard (at any moment of the demo day)
+# ---------------------------------------------------------------------------
+DEMO_WARNING_HOURS = 2   # forecast lead time in the demo (real forecasts: 6-48 h ahead)
+
+
+def start_at(c, hour):
+    """
+    Crisis c, started at this hour of the demo day ("Start crisis").
+    Sudden ones (earthquake, wildfire, attack) hit right away, with no warning.
+    Forecastable ones (heat wave, cold snap, windstorm) are announced now and hit
+    DEMO_WARNING_HOURS later: shorter than a real forecast, to fit the demo day.
+    """
+    c = dict(c)
+    warning = min(c["warning_hours"], DEMO_WARNING_HOURS) if c["forecastable"] else 0
+    start = round((hour + warning) * 4) / 4
+    c.update(triggered_at=hour, warning_hours=warning, start_hour=start,
+             end_hour=min(24, start + TYPES[c["type"]]["hours"]))
+    return c
+
+
+def full_blackout(country_id, c, on_hour, off_hour=None):
+    """
+    "Force full blackout": every zone loses power from when it's switched on (or when the
+    crisis hits, if later) for the severity's longest restore time, or until it's
+    switched off.
+    """
+    start = max(c["start_hour"], on_hour)
+    end = min(24.0, start + RESTORE_HOURS[c["severity"]][1])
+    if off_hour is not None:
+        end = min(end, off_hour)
+    if start >= end:
+        return []
+    return [{"zone": z["name"], "start": start, "end": end, "cause": "full blackout"}
+            for z in simulator.COUNTRIES[country_id]["zones"]]
+
+
+def merge_outages(outages):
+    """One outage per zone and stretch of time: overlapping ones (a crisis outage and a full
+    blackout in the same zone) are joined."""
+    merged = []
+    for o in sorted(outages, key=lambda o: (o["zone"], o["start"])):
+        last = merged[-1] if merged and merged[-1]["zone"] == o["zone"] else None
+        if last and o["start"] <= last["end"]:
+            last["end"] = max(last["end"], o["end"])
+            if o["cause"] not in last["cause"]:
+                last["cause"] += f", {o['cause']}"
+        else:
+            merged.append(dict(o))
+    return sorted(merged, key=lambda o: o["start"])
+
+
+def end_at(c, outages, hour):
+    """ "End crisis" at this hour: the crisis stops (if it hadn't hit yet, it's called off)
+    and power comes back everywhere."""
+    c = dict(c, end_hour=max(min(c["end_hour"], hour), 0), ended_at=hour)
+    outages = [dict(o, end=min(o["end"], hour)) for o in outages if o["start"] < hour]
+    return c, outages
 
 
 def dark_zones_at(outages, hour):

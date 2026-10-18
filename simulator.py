@@ -299,10 +299,10 @@ def meters_between(lat1, lon1, lat2, lon2):
     return math.hypot(dx, dy)
 
 
-def building_load_kw(building, stress_event):
+def building_load_kw(building, stress_event, hour=None):
     """A critical building's power use. It goes up during the stress event (cooling in a
     heat wave, heating in a cold snap) by the country's buildings_factor."""
-    factor = _event()["buildings_factor"] if stress_event else 1.0
+    factor = _event(hour)["buildings_factor"] if stress_event else 1.0
     return building["load_kw"] * factor
 
 
@@ -318,7 +318,7 @@ def other_customers_kw(zone, hour):
     else:
         share = 0.6
     if is_stress_event(hour):
-        share *= _event()["other_customers_factor"]   # everyone's AC / heating
+        share *= _event(hour)["other_customers_factor"]   # everyone's AC / heating
     return ZONES[zone]["other_customers_kw"] * share
 
 
@@ -333,9 +333,10 @@ _weather_day = None
 # zones lose grid power, from when to when). None / () = the normal scripted demo day.
 _crisis = None
 _outages = ()
+_crisis_from = 0.0    # the hour the crisis was started ("Start crisis"); before it, a normal day
 
 
-def _event():
+def _event(hour=None):
     """
     The weather event straining the grid today, with the same fields as the config's
     [stress_event]. Normally the country's scripted one (the 2-8 pm heat wave or cold snap).
@@ -343,9 +344,10 @@ def _event():
     using the config's [crisis_effects] for that type. Those numbers are for severity 3;
     severity scales them (1 = a third as strong, 5 = two-thirds stronger).
     Other crisis types (windstorm, earthquake...) don't change the weather: None.
+    hour: before the crisis was started, the day is still the normal one (scripted event).
     """
     scripted = COUNTRY["stress_event"]
-    if _crisis is None:
+    if _crisis is None or (hour is not None and hour < _crisis_from):
         return scripted
     if _crisis["type"] not in ("heat_wave", "cold_snap"):
         return None
@@ -364,14 +366,14 @@ def _event():
     }
 
 
-def event_name():
-    """The name of today's event: the scripted one, or the crisis in crisis mode."""
-    return _crisis["name"] if _crisis else COUNTRY["stress_event"]["name"]
+def event_name(hour):
+    """The name of the event at this hour: the scripted one, or the crisis once started."""
+    return _crisis["name"] if _crisis and hour >= _crisis_from else COUNTRY["stress_event"]["name"]
 
 
 def is_stress_event(hour):
     """Is the day's stress event (heat wave, cold snap...) happening at this hour?"""
-    event = _event()
+    event = _event(hour)
     if _ordinary_day or event is None:
         return False
     return event["start_hour"] <= hour < event["end_hour"]
@@ -391,7 +393,7 @@ def crisis_reserve_pct(hour):
     Sudden crises (earthquake, wildfire, attack) come with no warning, so no pre-charge.
     """
     c = _crisis
-    if c is None:
+    if c is None or hour >= c.get("ended_at", 99):     # no crisis, or "End crisis" was pressed
         return None
     if c["forecastable"] and c["start_hour"] - c["warning_hours"] <= hour < c["start_hour"]:
         return PRECHARGE_PCT
@@ -409,7 +411,7 @@ def electricity_price(hour):
     """Price per kWh in the country's currency (from the config file).
     Cheap midday (solar), expensive in the evening."""
     p = COUNTRY["prices"]
-    event = _event()
+    event = _event(hour)
     if is_stress_event(hour) and hour >= event["start_hour"] + 2:
         return event["peak_price"]            # stress event peak: very expensive
     if is_stress_event(hour):
@@ -426,7 +428,7 @@ def grid_stress(hour):
     Batteries react to this signal on their own. Each zone's actual stress is worked
     out separately from what it's really drawing (see zone_stress in the readings)."""
     if is_stress_event(hour):
-        return 85 + (hour - _event()["start_hour"]) * 2   # climbs 85 -> 95
+        return 85 + (hour - _event(hour)["start_hour"]) * 2   # climbs 85 -> 95
     if 17 <= hour < 21:
         return 60
     if 7 <= hour < 10:
@@ -440,7 +442,7 @@ def outdoor_temp_c(hour):
     import weather
     base = weather.at(_weather_day, hour)["temp_c"]
     if is_stress_event(hour):
-        base += _event()["temperature_change_c"]   # hotter or colder
+        base += _event(hour)["temperature_change_c"]   # hotter or colder
     return base
 
 
@@ -459,7 +461,7 @@ def home_usage_kw(home, hour, rng):
     if home["has_flexible_load"]:
         kw += flexible_usage_kw(home, hour, event_part=False)   # EV overnight, daytime load
     if is_stress_event(hour):
-        low, high = _event()["extra_home_load_kw"]
+        low, high = _event(hour)["extra_home_load_kw"]
         kw += rng.uniform(low, high)          # air conditioning (heat wave) or heating (cold snap)
     return kw + rng.uniform(-0.2, 0.2)
 
@@ -478,7 +480,7 @@ def flexible_usage_kw(home, hour, event_part=True):
     if 12 <= hour < 18:
         kw += flex["daytime_kw"]                      # pool pump / water heater
     if event_part and is_stress_event(hour):
-        kw += _event()["thermostat_nudge_kw"]   # thermostat nudge (part of AC/heating)
+        kw += _event(hour)["thermostat_nudge_kw"]   # thermostat nudge (part of AC/heating)
     return kw
 
 
@@ -533,7 +535,7 @@ def fire_index_now(hour):
         w = weather.at(_weather_day, h)
         humidity = w["humidity_pct"]
         if is_stress_event(h):                       # e.g. a heat wave is drier, too
-            humidity += _event().get("humidity_change_pct", 0)
+            humidity += _event(h).get("humidity_change_pct", 0)
         worst = max(worst, crisis.index_from_weather(outdoor_temp_c(h), humidity, w["wind_kmh"]))
     return worst
 
@@ -541,7 +543,7 @@ def fire_index_now(hour):
 # ---------------------------------------------------------------------------
 # Run the day
 # ---------------------------------------------------------------------------
-def simulate(seed=SEED, ordinary_day=False, month=None, crisis=None, outages=()):
+def simulate(seed=SEED, ordinary_day=False, month=None, crisis=None, outages=(), crisis_from=0.0):
     """Return a list of readings (one dict per battery per 15 minutes).
 
     ordinary_day=True gives a calm day: no stress event and no planted problems.
@@ -552,16 +554,17 @@ def simulate(seed=SEED, ordinary_day=False, month=None, crisis=None, outages=())
     crisis / outages (crisis mode, from crisis.py): the crisis replaces the scripted event,
     batteries pre-charge during its warning, and zones in an outage get no grid power:
     their homes run on their batteries until power returns or the battery is empty.
+    crisis_from: the hour the crisis was started; before it the day is the normal one.
     """
     import weather                            # (here, not at the top: weather.py imports this file)
-    global _ordinary_day, _weather_day, _crisis, _outages
+    global _ordinary_day, _weather_day, _crisis, _outages, _crisis_from
     _ordinary_day = ordinary_day
-    _crisis, _outages = crisis, tuple(outages)
+    _crisis, _outages, _crisis_from = crisis, tuple(outages), crisis_from
     _weather_day = weather.typical_day(COUNTRY_ID, month or DAY_START.month)
     try:
         return _run_day(seed, ordinary_day)
     finally:
-        _ordinary_day, _crisis, _outages = False, None, ()
+        _ordinary_day, _crisis, _outages, _crisis_from = False, None, (), 0.0
 
 
 def _run_day(seed, ordinary_day):
@@ -703,7 +706,7 @@ def _run_day(seed, ordinary_day):
                 "battery_reserve_pct": reserve or crisis.NORMAL_RESERVE_PCT,
                 "grid_stress": stress,
                 "stress_event": is_stress_event(hour),
-                "event_name": event_name(),
+                "event_name": event_name(hour),
                 "crisis_reserve_pct": crisis_reserve_pct(hour),
                 # Money: discharging when it's pricey saves/earns; charging costs
                 "earnings": 0.0 if dark else round(kwh * price, 3),   # backup power during an outage earns nothing
@@ -715,7 +718,7 @@ def _run_day(seed, ordinary_day):
         step_rows = readings[-len(fleet):]
         for zone, info in ZONES.items():
             fleet_kw = sum(r["from_grid_kw"] for r in step_rows if r["zone"] == zone)
-            buildings_kw = sum(building_load_kw(b, is_stress_event(hour)) for b in buildings if b["zone"] == zone)
+            buildings_kw = sum(building_load_kw(b, is_stress_event(hour), hour) for b in buildings if b["zone"] == zone)
             load = fleet_kw + buildings_kw + other_customers_kw(zone, hour)
             if is_dark(zone, hour):
                 load = 0.0          # no grid power: nothing flows (buildings run on their backup)
