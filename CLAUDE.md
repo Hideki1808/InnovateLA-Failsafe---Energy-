@@ -159,6 +159,10 @@ Known gaps today (fix as part of the crisis-mode work):
 - Check the rules on their own: python rules.py
 - Simulate every country and print a summary: python simulator.py
 - Download real data into data/ (needs internet, run before the demo): python fetch_data.py
+- Test crisis mode (report + checks: seasons, severity 4-5 cuts a zone, same seed = same
+  result): python test_crisis.py
+- Same, with data/ hidden to test the fallbacks (renames it, always puts it back):
+  python test_crisis.py --without-data
 
 ## Structure
 - app.py: the dashboard (tabs: Live dispatch with the map, Normal day earnings)

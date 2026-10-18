@@ -45,6 +45,7 @@ Munich, Germany) and press **Play** to run the demo day.
 | `map_gestures.py` | Trackpad gestures on the map (two-finger slide moves it, pinch zooms) |
 | `fetch_data.py` | Run once before the demo: downloads real weather (Open-Meteo), critical buildings (OpenStreetMap) and earthquake history (USGS) into `data/`. The app itself never goes online |
 | `data/` | The downloaded data, saved so the app works offline |
+| `test_crisis.py` | Checks crisis mode and prints a report per country, month and crisis type. `python test_crisis.py` (add `--without-data` to test the fallbacks) |
 | `crisis.py` | Crisis types (heat wave, cold snap, windstorm, earthquake, wildfire, grid attack): how likely each is per month, warning or none, severity 1-5, and which zones go dark (seeded, so a crisis can be replayed). Try `python crisis.py` |
 | `weather.py` | The weather for the chosen country and month: real (from `data/`) or, if that's missing, approximate typical values from the config |
 | `config/countries.toml` | Everything country-specific. Add a country by copying one block |
