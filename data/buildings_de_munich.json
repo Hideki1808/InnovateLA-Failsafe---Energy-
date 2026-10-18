@@ -1,0 +1,28 @@
+{
+ "source": "OpenStreetMap via Overpass API (© OpenStreetMap contributors, ODbL)",
+ "fetched_at": "2026-10-18 01:08 UTC",
+ "country": "de_munich",
+ "region_box": {
+  "south": 48.112,
+  "west": 11.64,
+  "north": 48.128,
+  "east": 11.672
+ },
+ "buildings": [
+  {
+   "type": "fire_station",
+   "name": "Freiwillige Feuerwehr München",
+   "lat": 48.12317,
+   "lon": 11.667495,
+   "osm_id": "node/1362546319"
+  },
+  {
+   "type": "fire_station",
+   "name": "Abteilung Michaeliburg",
+   "lat": 48.114983,
+   "lon": 11.652187,
+   "osm_id": "way/240637727"
+  }
+ ],
+ "empty": false
+}

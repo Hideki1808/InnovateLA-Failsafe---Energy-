@@ -43,6 +43,8 @@ Munich, Germany) and press **Play** to run the demo day.
 | `rules.py` | Decides what's normal, what can wait, what needs the dispatcher, the relief plan and the summary |
 | `style.py` | Colors, a little CSS, and small display helpers |
 | `map_gestures.py` | Trackpad gestures on the map (two-finger slide moves it, pinch zooms) |
+| `fetch_data.py` | Run once before the demo: downloads real weather (Open-Meteo), critical buildings (OpenStreetMap) and earthquake history (USGS) into `data/`. The app itself never goes online |
+| `data/` | The downloaded data, saved so the app works offline |
 | `config/countries.toml` | Everything country-specific. Add a country by copying one block |
 | `.streamlit/config.toml` | The theme (colors, fonts, rounded corners) |
 | `CLAUDE.md` | Project notes and plan |

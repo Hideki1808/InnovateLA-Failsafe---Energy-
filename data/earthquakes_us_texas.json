@@ -1,0 +1,73 @@
+{
+ "source": "USGS Earthquake Hazards Program (earthquake.usgs.gov)",
+ "fetched_at": "2026-10-18 01:08 UTC",
+ "country": "us_texas",
+ "centre": {
+  "latitude": 30.309,
+  "longitude": -97.688
+ },
+ "radius_km": 200,
+ "min_magnitude": 4.0,
+ "from": "1976-10-17",
+ "to": "2026-10-17",
+ "count": 7,
+ "earthquakes": [
+  {
+   "magnitude": 4.6,
+   "place": "18 km ENE of Falls City, Texas",
+   "time": "2025-01-30",
+   "lon": -97.846,
+   "lat": 29.058,
+   "depth_km": 6.8365
+  },
+  {
+   "magnitude": 4.5,
+   "place": "3 km SSW of Falls City, Texas",
+   "time": "2024-02-17",
+   "lon": -98.027,
+   "lat": 28.948,
+   "depth_km": 7.2497
+  },
+  {
+   "magnitude": 4.3,
+   "place": "3 km S of Falls City, Texas",
+   "time": "2024-02-17",
+   "lon": -98.024,
+   "lat": 28.951,
+   "depth_km": 7.7132
+  },
+  {
+   "magnitude": 4.1,
+   "place": "16 km ENE of Falls City, Texas",
+   "time": "2023-09-14",
+   "lon": -97.864,
+   "lat": 29.049,
+   "depth_km": 7.9254
+  },
+  {
+   "magnitude": 4,
+   "place": "4 km SSE of Falls City, Texas",
+   "time": "2018-05-01",
+   "lon": -98.0015,
+   "lat": 28.9476,
+   "depth_km": 5
+  },
+  {
+   "magnitude": 4.8,
+   "place": "14 km SSW of Falls City, Texas",
+   "time": "2011-10-20",
+   "lon": -98.079,
+   "lat": 28.865,
+   "depth_km": 5
+  },
+  {
+   "magnitude": 4.1,
+   "place": "21 km NW of Pawnee, Texas",
+   "time": "1993-04-09",
+   "lon": -98.124,
+   "lat": 28.811,
+   "depth_km": 5
+  }
+ ],
+ "empty": false
+}

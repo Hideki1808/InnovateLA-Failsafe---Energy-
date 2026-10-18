@@ -104,7 +104,8 @@ Known gaps today (fix as part of the crisis-mode work):
   offline background, plus the "© CARTO" credit while online tiles are used.
 - The fonts (Outfit, Inter Tight) load from Google Fonts: save the font files in the
   project and serve them locally (Streamlit static files) so they work offline.
-- No `fetch_data.py` or `data/` folder yet; everything is simulated today.
+- `fetch_data.py` and `data/` exist (real weather, buildings, earthquakes), but the
+  dashboard doesn't read them yet: everything on screen is still simulated.
 
 ## Tech stack
 - Python + Streamlit (web dashboard), Altair for charts, pydeck for the map
@@ -119,6 +120,7 @@ Known gaps today (fix as part of the crisis-mode work):
 - Run: streamlit run app.py
 - Check the rules on their own: python rules.py
 - Simulate every country and print a summary: python simulator.py
+- Download real data into data/ (needs internet, run before the demo): python fetch_data.py
 
 ## Structure
 - app.py: the dashboard (tabs: Live dispatch with the map, Normal day earnings)
@@ -128,8 +130,9 @@ Known gaps today (fix as part of the crisis-mode work):
 - config/countries.toml: everything country-specific (all values approximate)
 - style.py: the look (colors, a little CSS, stat cards, labels, alert list, legend)
 - map_gestures.py: trackpad gestures on the map (two-finger slide moves it, pinch zooms)
-- fetch_data.py: (planned) the ONLY file that calls APIs; saves results in data/
-- data/: (planned) fetched data, committed to git, so the app runs offline
+- fetch_data.py: the ONLY file that calls APIs. Run once before the demo:
+  python fetch_data.py (weather, OSM critical buildings, USGS earthquakes per country)
+- data/: the fetched data (weather_*, buildings_*, earthquakes_* per country), committed to git
 - .streamlit/config.toml: the theme (off-white page, white rounded panels, coral accent;
   fonts: Outfit for the title, Inter Tight for everything else)
 - requirements.txt: list of Python packages to install

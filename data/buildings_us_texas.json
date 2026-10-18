@@ -1,0 +1,35 @@
+{
+ "source": "OpenStreetMap via Overpass API (© OpenStreetMap contributors, ODbL)",
+ "fetched_at": "2026-10-18 01:08 UTC",
+ "country": "us_texas",
+ "region_box": {
+  "south": 30.3,
+  "west": -97.7,
+  "north": 30.318,
+  "east": -97.676
+ },
+ "buildings": [
+  {
+   "type": "water",
+   "name": "Unnamed water",
+   "lat": 30.301118,
+   "lon": -97.693695,
+   "osm_id": "way/319329589"
+  },
+  {
+   "type": "fire_station",
+   "name": "Austin Fire Dpt. Air Shop",
+   "lat": 30.300896,
+   "lon": -97.692879,
+   "osm_id": "way/319329590"
+  },
+  {
+   "type": "fire_station",
+   "name": "Austin Fire Station Number 18",
+   "lat": 30.317238,
+   "lon": -97.69019,
+   "osm_id": "way/382693434"
+  }
+ ],
+ "empty": false
+}

@@ -1,0 +1,329 @@
+{
+ "source": "USGS Earthquake Hazards Program (earthquake.usgs.gov)",
+ "fetched_at": "2026-10-18 01:08 UTC",
+ "country": "de_munich",
+ "centre": {
+  "latitude": 48.120000000000005,
+  "longitude": 11.656
+ },
+ "radius_km": 200,
+ "min_magnitude": 4.0,
+ "from": "1976-10-17",
+ "to": "2026-10-17",
+ "count": 39,
+ "earthquakes": [
+  {
+   "magnitude": 4,
+   "place": "2 km NE of Innerbraz, Austria",
+   "time": "2018-01-17",
+   "lon": 9.938,
+   "lat": 47.1697,
+   "depth_km": 10
+  },
+  {
+   "magnitude": 4,
+   "place": "Austria",
+   "time": "2010-10-19",
+   "lon": 11.644,
+   "lat": 47.381,
+   "depth_km": 6.6
+  },
+  {
+   "magnitude": 4.1,
+   "place": "Austria",
+   "time": "2008-07-18",
+   "lon": 13.787,
+   "lat": 47.463,
+   "depth_km": 10
+  },
+  {
+   "magnitude": 4.1,
+   "place": "2 km N of Zams, Austria",
+   "time": "2007-05-19",
+   "lon": 10.59,
+   "lat": 47.18,
+   "depth_km": 4
+  },
+  {
+   "magnitude": 4,
+   "place": "7 km NW of Mariastein, Austria",
+   "time": "2003-10-29",
+   "lon": 11.976,
+   "lat": 47.564,
+   "depth_km": 5
+  },
+  {
+   "magnitude": 4.7,
+   "place": "2 km WSW of Albstadt, Germany",
+   "time": "2003-03-22",
+   "lon": 9,
+   "lat": 48.21,
+   "depth_km": 6
+  },
+  {
+   "magnitude": 4.5,
+   "place": "11 km WSW of Tubre, Italy",
+   "time": "2001-10-01",
+   "lon": 10.322,
+   "lat": 46.611,
+   "depth_km": 10
+  },
+  {
+   "magnitude": 4.7,
+   "place": "3 km NNE of Rifiano, Italy",
+   "time": "2001-07-17",
+   "lon": 11.201,
+   "lat": 46.735,
+   "depth_km": 10
+  },
+  {
+   "magnitude": 4,
+   "place": "1 km NNW of Warth, Austria",
+   "time": "2000-06-10",
+   "lon": 10.173,
+   "lat": 47.262,
+   "depth_km": 10
+  },
+  {
+   "magnitude": 4.5,
+   "place": "11 km WSW of Tubre, Italy",
+   "time": "2000-04-06",
+   "lon": 10.33,
+   "lat": 46.605,
+   "depth_km": 5
+  },
+  {
+   "magnitude": 4.1,
+   "place": "2 km NW of Sennwald, Switzerland",
+   "time": "2000-03-04",
+   "lon": 9.475,
+   "lat": 47.274,
+   "depth_km": 10
+  },
+  {
+   "magnitude": 4.3,
+   "place": "11 km WSW of Tubre, Italy",
+   "time": "1999-12-31",
+   "lon": 10.323,
+   "lat": 46.603,
+   "depth_km": 10
+  },
+  {
+   "magnitude": 4.8,
+   "place": "12 km N of Isolaccia, Italy",
+   "time": "1999-12-29",
+   "lon": 10.308,
+   "lat": 46.601,
+   "depth_km": 10
+  },
+  {
+   "magnitude": 4.1,
+   "place": "1 km NE of Wangen, Germany",
+   "time": "1997-10-21",
+   "lon": 9.62,
+   "lat": 48.737,
+   "depth_km": 20
+  },
+  {
+   "magnitude": 4.6,
+   "place": "2 km ESE of Namlos, Austria",
+   "time": "1997-06-05",
+   "lon": 10.692,
+   "lat": 47.344,
+   "depth_km": 5
+  },
+  {
+   "magnitude": 4.1,
+   "place": "5 km E of Ellbögen, Austria",
+   "time": "1996-07-17",
+   "lon": 11.519,
+   "lat": 47.175,
+   "depth_km": 10
+  },
+  {
+   "magnitude": 4.7,
+   "place": "2 km W of Warth, Austria",
+   "time": "1994-03-31",
+   "lon": 10.153,
+   "lat": 47.251,
+   "depth_km": 13.6
+  },
+  {
+   "magnitude": 4.2,
+   "place": "4 km S of Hirschegg, Austria",
+   "time": "1993-07-10",
+   "lon": 10.175,
+   "lat": 47.309,
+   "depth_km": 9.9
+  },
+  {
+   "magnitude": 4.4,
+   "place": "1 km W of Sennwald, Switzerland",
+   "time": "1992-05-15",
+   "lon": 9.487,
+   "lat": 47.262,
+   "depth_km": 5
+  },
+  {
+   "magnitude": 4.4,
+   "place": "2 km WSW of Sennwald, Switzerland",
+   "time": "1992-05-08",
+   "lon": 9.47,
+   "lat": 47.253,
+   "depth_km": 5
+  },
+  {
+   "magnitude": 4.4,
+   "place": "0 km NNW of Sennwald, Switzerland",
+   "time": "1992-05-08",
+   "lon": 9.498,
+   "lat": 47.266,
+   "depth_km": 5
+  },
+  {
+   "magnitude": 4,
+   "place": "5 km SSE of Sellrain, Austria",
+   "time": "1990-08-20",
+   "lon": 11.256,
+   "lat": 47.175,
+   "depth_km": 10
+  },
+  {
+   "magnitude": 4.2,
+   "place": "3 km ENE of Galtür, Austria",
+   "time": "1990-05-16",
+   "lon": 10.226,
+   "lat": 46.979,
+   "depth_km": 5
+  },
+  {
+   "magnitude": 4.5,
+   "place": "Austria",
+   "time": "1989-11-17",
+   "lon": 11.88,
+   "lat": 47.468,
+   "depth_km": 11.5
+  },
+  {
+   "magnitude": 4.1,
+   "place": "2 km SSE of Domegge di Cadore, Italy",
+   "time": "1987-04-07",
+   "lon": 12.416,
+   "lat": 46.439,
+   "depth_km": 10
+  },
+  {
+   "magnitude": 4.4,
+   "place": "5 km NW of Maurach, Austria",
+   "time": "1985-06-10",
+   "lon": 11.701,
+   "lat": 47.452,
+   "depth_km": 26.2
+  },
+  {
+   "magnitude": 4.2,
+   "place": "6 km WSW of Curon Venosta, Italy",
+   "time": "1984-06-08",
+   "lon": 10.465,
+   "lat": 46.792,
+   "depth_km": 10.4
+  },
+  {
+   "magnitude": 4.4,
+   "place": "5 km N of Thaur, Austria",
+   "time": "1984-02-26",
+   "lon": 11.469,
+   "lat": 47.342,
+   "depth_km": 10
+  },
+  {
+   "magnitude": 4.3,
+   "place": "8 km SW of Curon Venosta, Italy",
+   "time": "1983-08-31",
+   "lon": 10.451,
+   "lat": 46.766,
+   "depth_km": 10
+  },
+  {
+   "magnitude": 4.2,
+   "place": "9 km SW of Curon Venosta, Italy",
+   "time": "1983-07-31",
+   "lon": 10.444,
+   "lat": 46.76,
+   "depth_km": 10.3
+  },
+  {
+   "magnitude": 4.3,
+   "place": "2 km SSE of Asselfingen, Germany",
+   "time": "1982-05-17",
+   "lon": 10.207,
+   "lat": 48.511,
+   "depth_km": 33
+  },
+  {
+   "magnitude": 4.1,
+   "place": "1 km NNE of Mühlau, Austria",
+   "time": "1982-05-01",
+   "lon": 11.407,
+   "lat": 47.291,
+   "depth_km": 10
+  },
+  {
+   "magnitude": 4.2,
+   "place": "11 km SE of Stelvio, Italy",
+   "time": "1980-01-25",
+   "lon": 10.636,
+   "lat": 46.515,
+   "depth_km": 33
+  },
+  {
+   "magnitude": 4.7,
+   "place": "0 km WSW of Jungingen, Germany",
+   "time": "1978-10-10",
+   "lon": 9.03,
+   "lat": 48.324,
+   "depth_km": 10
+  },
+  {
+   "magnitude": 4.1,
+   "place": "3 km E of Bisingen, Germany",
+   "time": "1978-09-19",
+   "lon": 8.971,
+   "lat": 48.307,
+   "depth_km": 10
+  },
+  {
+   "magnitude": 4.1,
+   "place": "4 km E of Bisingen, Germany",
+   "time": "1978-09-03",
+   "lon": 8.979,
+   "lat": 48.309,
+   "depth_km": 10
+  },
+  {
+   "magnitude": 5.3,
+   "place": "4 km SSW of Jungingen, Germany",
+   "time": "1978-09-03",
+   "lon": 9.008,
+   "lat": 48.29,
+   "depth_km": 8
+  },
+  {
+   "magnitude": 4.5,
+   "place": "4 km NW of Albstadt, Germany",
+   "time": "1978-01-16",
+   "lon": 8.987,
+   "lat": 48.253,
+   "depth_km": 20
+  },
+  {
+   "magnitude": 4,
+   "place": "1 km ESE of Mühlingen, Germany",
+   "time": "1977-11-07",
+   "lon": 9.037,
+   "lat": 47.909,
+   "depth_km": 33
+  }
+ ],
+ "empty": false
+}
