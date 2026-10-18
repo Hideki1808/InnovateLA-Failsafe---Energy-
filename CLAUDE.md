@@ -64,32 +64,47 @@ What stays in code, not config: the demo scenario (which batteries fail, the 2-8
 wave) and the general shape of a day (cheap solar 10-3, evening peak 5-9).
 
 ## Next: Crisis mode (plan)
-Checkpoint before starting: commit and tag `before-crisis-mode`.
+Checkpoint before starting: commit and tag `before-crisis-mode` (on GitHub).
 
-A mode that replaces the single scripted stress event with crises that depend on the
-time of year, so the dispatcher sees how the fleet copes with different kinds of trouble.
-- **Month selector**: pick a month; the day's weather, load and crisis odds follow it.
-- **Seasonal crisis chances**: each country's config lists its crises and how likely each
-  is per month (e.g. Texas: summer heat waves, winter freezes, hurricanes; Munich: winter
-  cold snaps, summer storms). All numbers approximate.
-- **Forecastable vs. sudden crises**: forecastable ones (heat wave, cold snap) are announced
-  hours ahead, so batteries can pre-charge; sudden ones (storm damage, equipment failure)
-  hit with no warning. The summary shows the forecast and how much warning there was.
-- **Wildfire risk index**: a 0-100 daily score from heat, dryness and wind for the month.
-  High risk can trigger preventive power shutoffs in the zones most exposed.
-- **Severity scale**: every crisis gets a level (e.g. 1 minor to 5 extreme) that sets how
-  hard it hits load, prices and outages, shown clearly on screen.
-- **Random blackouts by zone**: during a crisis, some zones may lose grid power entirely,
-  chosen at random weighted by severity (and by wildfire risk for shutoffs).
-- **Full-blackout toggle**: a switch to cut grid power to the whole region at once, for
-  the worst-case demo.
-- **Battery runtime for zones that lose power**: for each home in a blacked-out zone, how
-  long its battery keeps it running at current use (hours left); medical and vulnerable
-  homes first, with a warning when runtime runs low. Critical buildings show their own
-  backup hours.
+Replace the single scripted stress event with crises that depend on the time of year:
+- **Month selector**: pick a month; weather, load and crisis odds follow it.
+- **Seasonal crisis chances**: each country lists its crises and how likely each is per
+  month (e.g. Texas: summer heat waves, winter freezes, hurricanes; Munich: winter cold
+  snaps, summer storms). All numbers approximate.
+- **Forecastable vs. sudden crises**: forecastable ones (heat wave, cold snap) are
+  announced hours ahead so batteries can pre-charge; sudden ones (storm damage,
+  earthquake, equipment failure) hit with no warning.
+- **Wildfire risk index**: a 0-100 daily score from heat, dryness and wind. High risk can
+  trigger preventive power shutoffs in exposed zones.
+- **Severity scale**: each crisis gets a level (1 minor to 5 extreme) that sets how hard
+  it hits load, prices and outages, shown clearly on screen.
+- **Random blackouts by zone**: during a crisis some zones lose grid power, picked at
+  random weighted by severity (and by wildfire risk for shutoffs).
+- **Full-blackout toggle**: a switch that cuts grid power to the whole region at once.
+- **Battery runtime for dark zones**: for each home in a zone without grid power, how
+  many hours its battery lasts at current use; medical and vulnerable homes first, with
+  a warning when runtime runs low. Critical buildings show their own backup hours.
 
-Keep the existing rules (triage, relief ladder, approvals) working in crisis mode; the
-dispatcher still approves every high-impact step.
+Triage, the relief ladder and approvals keep working in crisis mode; the dispatcher
+still approves every high-impact step.
+
+## Data and reliability rules (follow these in every future change)
+- **The app NEVER calls an API while running.** Only `fetch_data.py` calls APIs.
+- **All fetched data is saved in `data/` and committed to git.**
+- **If any saved file is missing or broken, fall back to simulated values without
+  crashing.**
+- **The app shows small labels saying whether each data source is real or simulated**,
+  plus credits: "Weather: Open-Meteo", "Map data © OpenStreetMap contributors",
+  "Earthquakes: USGS".
+- **The app must run fully with Wi-Fi off.**
+
+Known gaps today (fix as part of the crisis-mode work):
+- The map's street tiles (CARTO, built on OpenStreetMap) load from the internet: with
+  Wi-Fi off the map has no streets. Needs saved tiles/shapes in `data/` or a plain
+  offline background, plus the "© CARTO" credit while online tiles are used.
+- The fonts (Outfit, Inter Tight) load from Google Fonts: save the font files in the
+  project and serve them locally (Streamlit static files) so they work offline.
+- No `fetch_data.py` or `data/` folder yet; everything is simulated today.
 
 ## Tech stack
 - Python + Streamlit (web dashboard), Altair for charts, pydeck for the map
@@ -113,6 +128,8 @@ dispatcher still approves every high-impact step.
 - config/countries.toml: everything country-specific (all values approximate)
 - style.py: the look (colors, a little CSS, stat cards, labels, alert list, legend)
 - map_gestures.py: trackpad gestures on the map (two-finger slide moves it, pinch zooms)
+- fetch_data.py: (planned) the ONLY file that calls APIs; saves results in data/
+- data/: (planned) fetched data, committed to git, so the app runs offline
 - .streamlit/config.toml: the theme (off-white page, white rounded panels, coral accent;
   fonts: Outfit for the title, Inter Tight for everything else)
 - requirements.txt: list of Python packages to install
