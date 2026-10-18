@@ -260,8 +260,10 @@ def other_customers_kw(zone, hour):
 # ---------------------------------------------------------------------------
 # The world around the batteries (prices, grid strain, weather)
 # ---------------------------------------------------------------------------
-# Set by simulate(): on an ordinary day there's no stress event
+# Set by simulate(): on an ordinary day there's no stress event, and the typical
+# weather day for the chosen month (from weather.py)
 _ordinary_day = False
+_weather_day = None
 
 
 def is_stress_event(hour):
@@ -302,8 +304,10 @@ def grid_stress(hour):
 
 
 def outdoor_temp_c(hour):
-    t = COUNTRY["temperature_c"]
-    base = t["night"] + t["daily_rise"] * max(0, 1 - abs(hour - 15) / 9)   # warmest around 3 pm
+    """Outdoor temperature: the month's typical day (weather.py), plus the stress event's
+    change while it's on (hotter in a heat wave, colder in a cold snap)."""
+    import weather
+    base = weather.at(_weather_day, hour)["temp_c"]
     if is_stress_event(hour):
         base += COUNTRY["stress_event"]["temperature_change_c"]   # hotter or colder
     return base
@@ -369,14 +373,19 @@ def battery_plan_kw(hour, charge_pct):
 # ---------------------------------------------------------------------------
 # Run the day
 # ---------------------------------------------------------------------------
-def simulate(seed=SEED, ordinary_day=False):
+def simulate(seed=SEED, ordinary_day=False, month=None):
     """Return a list of readings (one dict per battery per 15 minutes).
 
     ordinary_day=True gives a calm day: no stress event and no planted problems.
     Used by the "Normal day earnings" tab.
+    month (1-12): whose typical weather to use (default: the demo date's month).
+    The weather comes from weather.py: real saved data if there is some, else the
+    approximate monthly values in the config.
     """
-    global _ordinary_day
+    import weather                            # (here, not at the top: weather.py imports this file)
+    global _ordinary_day, _weather_day
     _ordinary_day = ordinary_day
+    _weather_day = weather.typical_day(COUNTRY_ID, month or DAY_START.month)
     try:
         return _run_day(seed, ordinary_day)
     finally:
@@ -488,6 +497,7 @@ def _run_day(seed, ordinary_day):
                 "voltage": round(voltage, 1),
                 # The world
                 "price_per_kwh": price,
+                "outdoor_temp_c": round(outdoor_temp_c(hour), 1),
                 "grid_stress": stress,
                 "stress_event": is_stress_event(hour),
                 # Money: discharging when it's pricey saves/earns; charging costs

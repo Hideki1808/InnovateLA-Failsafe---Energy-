@@ -16,6 +16,7 @@ import rules
 import map_gestures
 import simulator
 import style
+import weather
 
 st.set_page_config(page_title="Fleet Dispatcher", layout="wide")
 started = time.time()   # used by Play to keep a steady pace
@@ -34,15 +35,15 @@ SEVERITY = {rules.NEEDS_DISPATCHER: 0, rules.WATCH: 1, rules.CAN_WAIT: 2, rules.
 # Make the fake data once per country and remember it (so the page doesn't redo it on
 # every click)
 @st.cache_data
-def load_readings(country_id):
+def load_readings(country_id, month):
     simulator.use_country(country_id)
-    return simulator.simulate()
+    return simulator.simulate(month=month)
 
 
 @st.cache_data
-def run_rules(country_id, at_time):
+def run_rules(country_id, month, at_time):
     simulator.use_country(country_id)
-    return pd.DataFrame(rules.triage(load_readings(country_id), at_time))
+    return pd.DataFrame(rules.triage(load_readings(country_id, month), at_time))
 
 
 # Page look: the theme is in .streamlit/config.toml; style.py adds the few extras
@@ -78,26 +79,31 @@ def draw_map(below, above, urgent_rows, view, tooltip):
 
 # --- Country: everything country-specific comes from config/countries.toml ---
 st.session_state.setdefault("country", simulator.DEFAULT_COUNTRY)
+st.session_state.setdefault("month", simulator.DAY_START.month)   # the demo date's month
 
 
 def reset_demo():
-    """A different country starts the demo over: back to noon, nothing approved yet."""
+    """A different country or month starts the demo over: back to noon, nothing approved yet."""
     for key in ("now", "playing", "pause_note", "seen", "approved", "next_time"):
         st.session_state.pop(key, None)
 
 
-title_col, country_col = st.columns([3, 1.2], vertical_alignment="bottom")
-country_col.selectbox("Country", list(simulator.COUNTRIES), key="country", on_change=reset_demo,
-                      format_func=lambda c: simulator.COUNTRIES[c]["name"], label_visibility="collapsed")
+title_col, country_col = st.columns([2.4, 1.6], vertical_alignment="bottom")
+pick_country, pick_month = country_col.columns([1.6, 1])
+pick_country.selectbox("Country", list(simulator.COUNTRIES), key="country", on_change=reset_demo,
+                       format_func=lambda c: simulator.COUNTRIES[c]["name"], label_visibility="collapsed")
+pick_month.selectbox("Month", range(1, 13), key="month", on_change=reset_demo,
+                     format_func=lambda m: weather.MONTHS[m - 1], label_visibility="collapsed")
 country_id = st.session_state.country
+month = st.session_state.month
 simulator.use_country(country_id)          # rules.py and simulator.py now use this country
 COUNTRY = simulator.COUNTRY
 CUR = COUNTRY["currency"]                  # e.g. "$" or "€"
 title_col.html(style.label(f"Live grid dispatch · {COUNTRY['region']}")
                + '<p class="brand">Home Battery Fleet</p>')
-country_col.caption("Simulated data. Country numbers are approximate.")
+country_col.caption("Simulated fleet. Country numbers are approximate.")
 
-readings = load_readings(country_id)
+readings = load_readings(country_id, month)
 data = pd.DataFrame(readings)
 
 live_tab, earn_tab = st.tabs(["Live dispatch", "Normal day earnings"])
@@ -142,7 +148,7 @@ with live_tab:
 
     now = st.session_state.now
     current = data[data["time"] == now]
-    results = run_rules(country_id, now)
+    results = run_rules(country_id, month, now)
 
     # Spot new events: a battery that needs the dispatcher (or changes why), a battery
     # going silent, or the grid becoming strained. Announce each once.
@@ -202,13 +208,17 @@ with live_tab:
     needs = int(counts.get(rules.NEEDS_DISPATCHER, 0))
     event_on = bool(current.iloc[0]["stress_event"])      # is the heat wave / cold snap on?
     st.html(style.stats([
-        (rules.clock(now), rules.event_label() if event_on else "local time", False),
+        (rules.clock(now), f"{rules.temp(current.iloc[0]['outdoor_temp_c'])} outside"
+                           + (f" · {rules.event_label()}" if event_on else ""), False),
         (needs, "need the dispatcher", needs > 0),
         (int(counts.get(rules.WATCH, 0)), "to watch", False),
         (int(counts.get(rules.CAN_WAIT, 0)), "can wait", False),
         (f"{strained_zones} of {len(zone_stress_now)}", "zones strained", strained_zones > 0),
         (f"{worst:.0f}%", f"busiest: {worst_zone}", worst >= rules.STRAINED_GRID),
     ]))
+    # Where each kind of data comes from: real (saved by fetch_data.py) or simulated
+    weather_day = weather.typical_day(country_id, month)
+    st.html(style.sources([(weather_day["label"], weather_day["source"] == "real", weather_day["credit"])]))
 
     # --- Main area: big map on the left, side panel with what to do on the right ---
     left, right = st.columns([1.9, 1.1], gap="medium")
@@ -523,14 +533,14 @@ MONEY_COLOR = style.CORAL                         # the accent: the money is the
 
 
 @st.cache_data
-def load_ordinary_day(country_id):
+def load_ordinary_day(country_id, month):
     simulator.use_country(country_id)
-    return pd.DataFrame(simulator.simulate(ordinary_day=True))
+    return pd.DataFrame(simulator.simulate(ordinary_day=True, month=month))
 
 
 @st.cache_data
-def demo_day_earnings(country_id):
-    return sum(r["earnings"] for r in load_readings(country_id))
+def demo_day_earnings(country_id, month):
+    return sum(r["earnings"] for r in load_readings(country_id, month))
 
 
 def money(amount, decimals=2):
@@ -545,7 +555,7 @@ def in_text(s):
 
 with earn_tab, st.container(key="panel_earnings"):
     simulator.use_country(country_id)
-    calm = load_ordinary_day(country_id)
+    calm = load_ordinary_day(country_id, month)
     prices = COUNTRY["prices"]
     st.html(style.label("How the fleet earns its keep on a normal day"))
     st.markdown(
@@ -647,7 +657,7 @@ with earn_tab, st.container(key="panel_earnings"):
         f"no energy lost when charging, and each battery ends the day about where it started. "
         f"For comparison, on the demo day with the {COUNTRY['stress_event']['name'].lower()} "
         f"the same fleet earned "
-        + in_text(f"{money(demo_day_earnings(country_id), 0)}, because peak prices hit "
+        + in_text(f"{money(demo_day_earnings(country_id, month), 0)}, because peak prices hit "
                   f"{money(COUNTRY['stress_event']['peak_price'])} / kWh.")
         + " All prices are approximate (see config/countries.toml)."
     )

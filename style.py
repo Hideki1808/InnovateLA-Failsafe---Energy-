@@ -85,6 +85,12 @@ CSS = f"""
   .alert .meta {{ color: {MUTED}; font-weight: 400; }}
   .alert .why {{ grid-column: 2; color: {INK}; font-size: .95rem; line-height: 1.4; }}
 
+  /* Data source tags: "Weather: real (...)" in green, "simulated" in grey, credit after */
+  .sources {{ margin: .55rem 0 .1rem .3rem; font-size: .8rem; line-height: 2; }}
+  .src {{ display: inline-block; padding: .1rem .65rem; border-radius: 999px; font-weight: 600;
+          margin-right: .45rem; }}
+  .credit {{ color: {MUTED}; margin-right: 1.3rem; }}
+
   /* Legend under the map */
   .legend {{ font-size: .95rem; color: {INK}; line-height: 2.1; }}
   .legend b {{ font-weight: 600; color: {MUTED}; font-size: .78rem; letter-spacing: .12em;
@@ -151,6 +157,21 @@ def alert_list(rows):
             f'<div class="why">{escape(a["reason"])}</div></div>'
         )
     return "".join(out)
+
+
+def sources(items):
+    """
+    A small line of data-source tags. items = [(label, is_real, credit), ...], e.g.
+    ("Weather: real (typical October day, 2025 data)", True, "Weather: Open-Meteo").
+    Real data gets a green tag, simulated a grey one; the credit follows in plain text.
+    """
+    out = []
+    for text, real, credit in items:
+        bg, fg = ("#e8f5ee", "#1f7a45") if real else ("#ecebe8", MUTED)
+        out.append(f'<span class="src" style="background:{bg};color:{fg}">{escape(text)}</span>')
+        if credit:
+            out.append(f'<span class="credit">{escape(credit)}</span>')
+    return '<div class="sources">' + "".join(out) + "</div>"
 
 
 def swatch(color, ring=None, ring_px=0, square=False):

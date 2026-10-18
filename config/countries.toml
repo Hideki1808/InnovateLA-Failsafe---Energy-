@@ -13,6 +13,10 @@
 #   the values. That's all: it appears in the dashboard's country dropdown.
 #   No code changes needed.
 #
+# WEATHER comes from data/weather_<country>.json (real, saved by fetch_data.py) for the
+# month picked in the dashboard. If that file is missing or broken, the dashboard falls
+# back to the approximate monthly values in [countries.<id>.typical_weather].
+#
 # Each country has a STRESS EVENT: what strains its grid in the demo (a heat wave in
 # Texas, a winter cold snap in Germany). It runs from start_hour to end_hour on the demo
 # day; the "Normal day earnings" tab shows a day without it.
@@ -50,9 +54,12 @@ night = 0.11
 cheap_solar = 0.05                       # 10 am - 3 pm, lots of solar
 evening_peak = 0.25                      # 5 - 9 pm on a normal day
 
-[countries.us_texas.temperature_c]       # outdoor temperature (approx.)
-night = 26                               # coolest part of a normal day
-daily_rise = 10                          # how much warmer it gets by mid-afternoon
+[countries.us_texas.typical_weather]     # FALLBACK only, used if data/weather_us_texas.json is
+                                         # missing or broken. Approx. monthly normals, Jan..Dec
+temp_low_c  = [ 4,  6, 10, 14, 19, 22, 23, 23, 21, 15,  9,  5]   # coolest hour of a typical day
+temp_high_c = [17, 19, 23, 27, 31, 34, 36, 36, 33, 28, 22, 17]   # warmest hour of a typical day
+humidity_pct = [65, 65, 62, 65, 70, 68, 63, 62, 65, 64, 66, 66]
+wind_kmh = [15, 16, 17, 17, 15, 14, 13, 12, 12, 13, 14, 15]
 
 [countries.us_texas.home_load_kw]        # per home (approx.)
 ev_charger = 7.2                         # Level 2 charger, overnight
@@ -65,7 +72,7 @@ daytime_kw = 1.5                         # pool pump, noon - 6 pm
 name = "Heat wave"
 start_hour = 14                          # 2 pm
 end_hour = 20                            # 8 pm
-temperature_change_c = 8                 # degrees warmer than a normal day
+temperature_change_c = 8                 # degrees warmer than a typical day of the month
 extra_home_load_kw = [3.0, 5.0]          # air conditioning, per home (random between these)
 thermostat_nudge_kw = 1.0                # flexible: AC set a degree warmer
 other_customers_factor = 1.5             # everyone else's load goes up this much
@@ -162,9 +169,12 @@ night = 0.30
 cheap_solar = 0.18
 evening_peak = 0.42
 
-[countries.de_munich.temperature_c]       # a winter day
-night = 1
-daily_rise = 5
+[countries.de_munich.typical_weather]     # FALLBACK only, used if data/weather_de_munich.json is
+                                          # missing or broken. Approx. monthly normals, Jan..Dec
+temp_low_c  = [-4, -3,  0,  3,  8, 11, 13, 13,  9,  5,  1, -2]
+temp_high_c = [ 3,  5, 10, 14, 19, 22, 24, 24, 19, 14,  8,  4]
+humidity_pct = [85, 80, 75, 70, 70, 70, 70, 72, 78, 82, 86, 87]
+wind_kmh = [12, 12, 13, 12, 10, 10, 10,  9,  9, 10, 11, 12]
 
 [countries.de_munich.home_load_kw]
 ev_charger = 11.0                        # 11 kW wallbox
@@ -177,7 +187,7 @@ daytime_kw = 1.0                         # heat-pump water heater, noon - 6 pm
 name = "Cold snap"
 start_hour = 14
 end_hour = 20
-temperature_change_c = -14               # degrees colder than a normal winter day
+temperature_change_c = -14               # degrees colder than a typical day of the month
 extra_home_load_kw = [2.0, 4.0]          # heat pumps and electric heaters, per home
 thermostat_nudge_kw = 0.6                # flexible: heating set a degree cooler
 other_customers_factor = 1.5

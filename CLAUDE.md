@@ -67,7 +67,8 @@ wave) and the general shape of a day (cheap solar 10-3, evening peak 5-9).
 Checkpoint before starting: commit and tag `before-crisis-mode` (on GitHub).
 
 Replace the single scripted stress event with crises that depend on the time of year:
-- **Month selector**: pick a month; weather, load and crisis odds follow it.
+- **Month selector** (done for weather: the outdoor temperature follows the month's
+  real typical day). Still to do: load and crisis odds follow the month too.
 - **Seasonal crisis chances**: each country lists its crises and how likely each is per
   month (e.g. Texas: summer heat waves, winter freezes, hurricanes; Munich: winter cold
   snaps, summer storms). All numbers approximate.
@@ -104,8 +105,8 @@ Known gaps today (fix as part of the crisis-mode work):
   offline background, plus the "© CARTO" credit while online tiles are used.
 - The fonts (Outfit, Inter Tight) load from Google Fonts: save the font files in the
   project and serve them locally (Streamlit static files) so they work offline.
-- `fetch_data.py` and `data/` exist (real weather, buildings, earthquakes), but the
-  dashboard doesn't read them yet: everything on screen is still simulated.
+- Weather is real now (weather.py reads data/, falls back to config, shows its label).
+  The saved buildings and earthquakes aren't used on screen yet.
 
 ## Tech stack
 - Python + Streamlit (web dashboard), Altair for charts, pydeck for the map
@@ -133,6 +134,8 @@ Known gaps today (fix as part of the crisis-mode work):
 - fetch_data.py: the ONLY file that calls APIs. Run once before the demo:
   python fetch_data.py (weather, OSM critical buildings, USGS earthquakes per country)
 - data/: the fetched data (weather_*, buildings_*, earthquakes_* per country), committed to git
+- weather.py: typical day of weather for the chosen country and month: real from data/,
+  or approximate monthly values from config/countries.toml if the file is missing or broken
 - .streamlit/config.toml: the theme (off-white page, white rounded panels, coral accent;
   fonts: Outfit for the title, Inter Tight for everything else)
 - requirements.txt: list of Python packages to install
