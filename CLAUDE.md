@@ -106,7 +106,12 @@ Known gaps today (fix as part of the crisis-mode work):
 - The fonts (Outfit, Inter Tight) load from Google Fonts: save the font files in the
   project and serve them locally (Streamlit static files) so they work offline.
 - Weather is real now (weather.py reads data/, falls back to config, shows its label).
-  The saved buildings and earthquakes aren't used on screen yet.
+- Critical buildings are real now: simulator.py places the saved OpenStreetMap buildings
+  at their real locations with real names (power use approximate by type). Made-up ones
+  from the config fill in only types with no real match (hospital, cold storage), tagged
+  "simulated"; if the file is missing, all made-up. Every zone gets at least 6 homes,
+  none within 60 m of a building. Zone capacities retuned for the new loads.
+- The saved earthquakes aren't used on screen yet.
 
 ## Tech stack
 - Python + Streamlit (web dashboard), Altair for charts, pydeck for the map

@@ -26,6 +26,8 @@ Only uses things built into Python, so nothing extra to install.
 """
 
 import csv
+import json
+import math
 import random
 import tomllib
 from datetime import datetime, timedelta
@@ -45,6 +47,18 @@ SEED = 42  # same seed = same fake data every run (handy for demos)
 # (All values there are approximate.) The dashboard picks a country with
 # use_country("us_texas"), which fills in the settings below from that file.
 CONFIG_FILE = Path(__file__).parent / "config" / "countries.toml"
+DATA_DIR = Path(__file__).parent / "data"
+
+# Real buildings from OpenStreetMap don't say how much power they use or what backup they
+# have, so each type gets typical values (approximate). Types not listed here are skipped.
+REAL_BUILDING_DEFAULTS = {
+    "hospital":     {"load_kw": 150, "backup": "Diesel generator", "backup_hours": 24},
+    "fire_station": {"load_kw": 15,  "backup": "Battery",          "backup_hours": 8},
+    "water":        {"load_kw": 25,  "backup": "Diesel generator", "backup_hours": 12},
+    "cold_storage": {"load_kw": 40,  "backup": "None",             "backup_hours": 0},
+}
+MIN_HOMES_PER_ZONE = 6         # every zone gets at least this many homes
+HOME_GAP_FROM_BUILDING_M = 60  # no home closer than this to a critical building
 
 
 def load_countries():
@@ -100,12 +114,41 @@ def use_country(country_id):
     BATTERY_MAX_KW = float(c["battery"]["max_kw"])
     # Critical buildings: protected last, never cut off. If the grid is desperate, the
     # ones with their own backup can be asked to run on it for a while.
-    CRITICAL_BUILDINGS = [
+    CRITICAL_BUILDINGS = _real_and_made_up_buildings(country_id, c)
+
+
+def _real_and_made_up_buildings(country_id, c):
+    """
+    The real buildings saved from OpenStreetMap (data/buildings_<country>.json), at their
+    real locations with their real names. The made-up buildings from the config are
+    added only for types the real data doesn't have (e.g. no real hospital in the region),
+    and marked "simulated". If the saved file is missing or broken, all made-up ones.
+    """
+    made_up = [
         {"building_id": b["id"], "name": b["name"], "building_type": b["type"],
          "lat": b["location"][0], "lon": b["location"][1], "load_kw": b["load_kw"],
-         "backup": b["backup"], "backup_hours": b["backup_hours"]}
+         "backup": b["backup"], "backup_hours": b["backup_hours"], "real": False}
         for b in c["critical_buildings"]
     ]
+    try:
+        saved = json.loads((DATA_DIR / f"buildings_{country_id}.json").read_text(encoding="utf-8"))
+        found = saved["buildings"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return made_up                                   # missing or broken file
+    real, counts = [], {}
+    for b in found:
+        kind = b.get("type")
+        if kind not in REAL_BUILDING_DEFAULTS or b.get("lat") is None or b.get("lon") is None:
+            continue
+        counts[kind] = counts.get(kind, 0) + 1
+        name = b.get("name") or ""
+        if name.startswith("Unnamed"):                  # e.g. "Unnamed water" -> clearer text
+            name = {"water": "Water facility"}.get(kind, kind.replace("_", " ").title())
+        real.append({"building_id": f"OSM-{kind.upper()}-{counts[kind]}", "name": name,
+                     "building_type": kind, "lat": b["lat"], "lon": b["lon"],
+                     **REAL_BUILDING_DEFAULTS[kind], "real": True, "osm_id": b.get("osm_id")})
+    have = {b["building_type"] for b in real}
+    return real + [b for b in made_up if b["building_type"] not in have]
 
 
 use_country(DEFAULT_COUNTRY)
@@ -156,14 +199,17 @@ def on_land(lat, lon):
     return in_area and not in_water
 
 
-def random_point(rng, shape):
-    """A random spot inside a zone's shape that's on land."""
+def random_point(rng, shape, keep_away=()):
+    """A random spot inside a zone's shape that's on land, and at least
+    HOME_GAP_FROM_BUILDING_M from every (lat, lon) in keep_away (the critical buildings)."""
     lats = [p[0] for p in shape]
     lons = [p[1] for p in shape]
-    while True:   # keep trying until a point lands inside (almost always first try)
+    while True:   # keep trying until a point fits (almost always within a few tries)
         lat = rng.uniform(min(lats), max(lats))
         lon = rng.uniform(min(lons), max(lons))
-        if inside(lat, lon, shape) and on_land(lat, lon):
+        if inside(lat, lon, shape) and on_land(lat, lon) and all(
+                meters_between(lat, lon, b_lat, b_lon) >= HOME_GAP_FROM_BUILDING_M
+                for b_lat, b_lon in keep_away):
             return round(lat, 5), round(lon, 5)
 
 
@@ -180,13 +226,21 @@ def make_fleet(rng):
     rng.shuffle(types)
     flexible_left = round(types.count("regular") * FLEXIBLE_SHARE)
 
+    # Every zone gets at least MIN_HOMES_PER_ZONE homes; the rest go to random zones
+    zone_names = list(ZONES)
+    zones_for_homes = [z for z in zone_names for _ in range(MIN_HOMES_PER_ZONE)]
+    zones_for_homes += [rng.choice(zone_names) for _ in range(FLEET_SIZE - len(zones_for_homes))]
+    rng.shuffle(zones_for_homes)
+    # Homes keep their distance from the critical buildings
+    building_spots = [(b["lat"], b["lon"]) for b in critical_buildings()]
+
     fleet = []
     for i in range(1, FLEET_SIZE + 1):
         household_type = types[i - 1]
         has_flexible_load = household_type == "regular" and flexible_left > 0
         flexible_left -= has_flexible_load
-        zone = rng.choice(list(ZONES))
-        lat, lon = random_point(rng, ZONES[zone]["shape"])
+        zone = zones_for_homes[i - 1]
+        lat, lon = random_point(rng, ZONES[zone]["shape"], keep_away=building_spots)
         home = {
             "battery_id": f"BAT-{i:03d}",
             "home_id": f"HOME-{i:03d}",
@@ -229,9 +283,18 @@ def critical_buildings():
     """The critical buildings (hospital, fire station, cold storage) with their locations."""
     buildings = []
     for b in CRITICAL_BUILDINGS:
-        assert on_land(b["lat"], b["lon"]), f"{b['name']} is not on land"
-        buildings.append({**b, "zone": zone_of(b["lat"], b["lon"])})
+        zone = zone_of(b["lat"], b["lon"])
+        if zone is None:                     # a real building just outside the zones: skip it
+            continue
+        buildings.append({**b, "zone": zone})
     return buildings
+
+
+def meters_between(lat1, lon1, lat2, lon2):
+    """Rough distance in metres between two nearby points (fine at this scale)."""
+    dy = (lat2 - lat1) * 111_320
+    dx = (lon2 - lon1) * 111_320 * math.cos(math.radians((lat1 + lat2) / 2))
+    return math.hypot(dx, dy)
 
 
 def building_load_kw(building, stress_event):

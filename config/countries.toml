@@ -89,13 +89,13 @@ flexible_share = 0.4                     # share of regular homes with flexible 
 [[countries.us_texas.zones]]
 name = "North Windsor Park"
 shape = [[30.3180, -97.7000], [30.3180, -97.6760], [30.3130, -97.6760], [30.3130, -97.7000]]
-capacity_kw = 560   # approx., set so the demo stress event strains this zone at the right time
+capacity_kw = 610   # approx., set so the demo stress event strains this zone at the right time
 other_customers_kw = 250                 # other homes and shops at their evening peak (approx.)
 
 [[countries.us_texas.zones]]
 name = "West Windsor Park"
 shape = [[30.3130, -97.7000], [30.3130, -97.6880], [30.3060, -97.6880], [30.3060, -97.7000]]
-capacity_kw = 480
+capacity_kw = 560
 other_customers_kw = 250
 
 [[countries.us_texas.zones]]
@@ -107,7 +107,7 @@ other_customers_kw = 250
 [[countries.us_texas.zones]]
 name = "South Windsor Park"
 shape = [[30.3060, -97.7000], [30.3060, -97.6760], [30.3000, -97.6760], [30.3000, -97.7000]]
-capacity_kw = 520
+capacity_kw = 450
 other_customers_kw = 250
 
 [[countries.us_texas.water]]             # Mueller Lake, just south-west of the region
@@ -204,13 +204,13 @@ flexible_share = 0.3
 [[countries.de_munich.zones]]
 name = "Trudering Nord"
 shape = [[48.1280, 11.6400], [48.1280, 11.6720], [48.1230, 11.6720], [48.1230, 11.6400]]
-capacity_kw = 360   # approx., set so the demo stress event strains this zone at the right time
+capacity_kw = 290   # approx., set so the demo stress event strains this zone at the right time
 other_customers_kw = 150
 
 [[countries.de_munich.zones]]
 name = "Trudering West"
 shape = [[48.1230, 11.6400], [48.1230, 11.6560], [48.1170, 11.6560], [48.1170, 11.6400]]
-capacity_kw = 310
+capacity_kw = 360
 other_customers_kw = 150
 
 [[countries.de_munich.zones]]
@@ -222,7 +222,7 @@ other_customers_kw = 150
 [[countries.de_munich.zones]]
 name = "Trudering Süd"
 shape = [[48.1170, 11.6400], [48.1170, 11.6720], [48.1120, 11.6720], [48.1120, 11.6400]]
-capacity_kw = 330
+capacity_kw = 370
 other_customers_kw = 150
 
 [[countries.de_munich.water]]             # lake in the Ostpark, just west of the region

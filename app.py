@@ -218,7 +218,19 @@ with live_tab:
     ]))
     # Where each kind of data comes from: real (saved by fetch_data.py) or simulated
     weather_day = weather.typical_day(country_id, month)
-    st.html(style.sources([(weather_day["label"], weather_day["source"] == "real", weather_day["credit"])]))
+    buildings_now = simulator.critical_buildings()
+    real_buildings = [b for b in buildings_now if b.get("real")]
+    made_up = [b["building_type"].replace("_", " ") for b in buildings_now if not b.get("real")]
+    if real_buildings:
+        buildings_label = (f"Buildings: real ({len(real_buildings)} from OpenStreetMap"
+                           + (f"; simulated {' and '.join(made_up)}" if made_up else "") + ")")
+    else:
+        buildings_label = "Buildings: simulated (no saved OpenStreetMap data)"
+    st.html(style.sources([
+        (weather_day["label"], weather_day["source"] == "real", weather_day["credit"]),
+        (buildings_label, bool(real_buildings),
+         "Map data © OpenStreetMap contributors" if real_buildings else None),
+    ]))
 
     # --- Main area: big map on the left, side panel with what to do on the right ---
     left, right = st.columns([1.9, 1.1], gap="medium")
@@ -274,8 +286,16 @@ with live_tab:
             "title": f"{b['name']} · critical building · {b['zone']}",
             "line1": f"Uses about {b['load_kw']} kW. Backup: {b['backup'].lower()}"
                      + (f", {b['backup_hours']} h" if b["backup_hours"] else ""),
-            "line2": "Protected last: never cut off.",
+            "line2": ("Real building (OpenStreetMap); power use approximate."
+                  if b.get("real") else "Simulated building (no real one found here).")
+                 + " Protected last: never cut off.",
         } for b in simulator.critical_buildings()]
+        # Buildings close together (like a fire station next to a water facility) would
+        # print their names on top of each other: push each later one's name down a line.
+        for i, row in enumerate(building_rows):
+            near = sum(simulator.meters_between(row["lat"], row["lon"], other["lat"], other["lon"]) < 250
+                       for other in building_rows[:i])
+            row["offset"] = [14, 18 * near]
 
         def dots(data, radius_m, min_px, max_px, color, pickable=False):
             """A layer of round dots. Rings are drawn as a slightly bigger dot underneath.
@@ -294,7 +314,7 @@ with live_tab:
             pdk.Layer("PolygonLayer", building_rows, get_polygon="square", get_fill_color=BUILDING_COLOR,
                       get_line_color=[255, 255, 255], line_width_min_pixels=2, pickable=True),
             pdk.Layer("TextLayer", character_set="'auto'", font_family=f"'{style.FONT}'", data=building_rows, get_position=["lon", "lat"], get_text="label", get_color=ink,
-                      get_size=14, font_weight=600, get_text_anchor="'start'", get_pixel_offset=[14, 0]),
+                      get_size=14, font_weight=600, get_text_anchor="'start'", get_pixel_offset="offset"),
         ]
         # (the pulsing rings around "Needs dispatcher" homes are drawn here, by draw_map)
         above = [
