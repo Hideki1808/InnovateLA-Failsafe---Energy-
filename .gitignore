@@ -6,3 +6,5 @@ fleet_data*.csv
 .remember/
 # Copy of the project for uploading to GitHub by hand (made from the files Git tracks)
 github_upload/
+# Local settings for the Claude app (personal paths), not part of the project
+.claude/
